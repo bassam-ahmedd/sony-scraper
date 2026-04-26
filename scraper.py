@@ -19,21 +19,21 @@ GSHEET_ID   = os.environ.get('GSHEET_ID', '')
 SA_JSON     = os.environ.get('GOOGLE_SERVICE_ACCOUNT', '')
 
 # ─── Constants ───────────────────────────────────────────────────────────────
-SOURCES = ['Our Site (ksa.amt.tv)', 'Qomra', 'Me Stores', 'Abdulwahed']
+SOURCES     = ['Our Site (ksa.amt.tv)', 'Qomra', 'Me Stores', 'Abdulwahed']
 COMPETITORS = ['Qomra', 'Me Stores', 'Abdulwahed']
 
 URLS = {
     'lenses': {
-        'our_site':    'https://ksa.amt.tv/camera-accessories/photography/lenses.html?product_brand=1',
-        'qomra':       'https://qomra.pro/en/search?q=le&filters[category_id]=750050316&filters[brand_id]=174800383',
-        'mestores':    'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
-        'abdulwahed':  'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
+        'our_site':   'https://ksa.amt.tv/camera-accessories/photography/lenses.html?product_brand=1',
+        'qomra':      'https://qomra.pro/en/search?q=le&filters[category_id]=750050316&filters[brand_id]=174800383',
+        'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
+        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
     },
     'cameras': {
-        'our_site':    'https://ksa.amt.tv/camcorders-digital-cameras/photography/digital-camera.html?product_brand=1',
-        'qomra':       'https://qomra.pro/en/category/jKQvBD?filters[category_id]=1061595081&filters[brand_id]=174800383',
-        'mestores':    'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
-        'abdulwahed':  'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
+        'our_site':   'https://ksa.amt.tv/camcorders-digital-cameras/photography/digital-camera.html?product_brand=1',
+        'qomra':      'https://qomra.pro/en/category/jKQvBD?filters[category_id]=1061595081&filters[brand_id]=174800383',
+        'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
+        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
     },
 }
 
@@ -43,19 +43,21 @@ NON_LENS_KEYWORDS = [
     'cleaning kit', 'tripod', 'flash', 'battery', 'charger', 'bag',
     'strap', 'memory card', 'sd card', 'cable', 'adapter ring',
     'camera body', 'bundle', 'cine lens', 'cinema lens', 'body only',
-    'sigma brush', 'beauty', 'skin', 'cream',
+    'camcorder', 'action cam', 'vlogging camera',
 ]
 
 LENS_KEYWORDS = [
     'mm', 'f/', 'f1.', 'f2.', 'f4', 'f5.', 'f6.',
     'g master', 'g lens', 'zeiss', 'fe ', 'e-mount', 'e mount',
-    'sel', 'macro', 'fisheye', 'zoom lens', 'prime lens',
+    'sel', 'macro', 'fisheye', 'zoom lens', 'prime lens', 'gm lens',
 ]
 
 NON_CAMERA_KEYWORDS = [
-    'lens', 'tripod', 'bag', 'strap', 'battery', 'charger',
-    'memory card', 'sd card', 'flash', 'adapter', 'filter',
-    'cleaning', 'bundle with lens', 'lens cap', 'hood',
+    'tripod', 'bag', 'strap', 'battery', 'charger',
+    'memory card', 'sd card', 'flash', 'filter',
+    'cleaning', 'lens cap', 'hood', 'g master', 'gm lens',
+    'zoom lens', 'prime lens', 'macro lens', 'fisheye',
+    ' lens ', 'lens|', '| lens',
 ]
 
 CAMERA_KEYWORDS = [
@@ -63,6 +65,7 @@ CAMERA_KEYWORDS = [
     'ilce', 'ilc-', 'dsc-', 'cyber-shot', 'mirrorless',
     'digital camera', 'full frame', 'aps-c', 'a7r', 'a7s', 'a7c',
     'a5100', 'a6000', 'a6100', 'a6400', 'a6600', 'a6700',
+    'camera, ilce', 'camera body',
 ]
 
 
@@ -82,13 +85,19 @@ def is_sony_lens(name):
     for kw in NON_LENS_KEYWORDS:
         if kw in n:
             return False
-    has_focal = bool(re.search(r'\d+\s*mm', n)) or bool(re.search(r'\d{2,3}[-/]\d', n))
+    has_focal   = bool(re.search(r'\d+\s*mm', n)) or bool(re.search(r'\d{2,3}[-/]\d', n))
     has_lens_kw = any(kw in n for kw in LENS_KEYWORDS)
     return has_focal or has_lens_kw
 
 
 def is_sony_camera(name):
     n = normalize(name)
+    # must not contain strong lens signals
+    lens_signals = ['mm f', 'f/1.', 'f/2.', 'f/4', 'f/5.', 'g master', 'gm |', '| gm',
+                    'zoom lens', 'prime lens', 'macro lens', 'fisheye lens']
+    for sig in lens_signals:
+        if sig in n:
+            return False
     for kw in NON_CAMERA_KEYWORDS:
         if kw in n:
             return False
@@ -98,7 +107,8 @@ def is_sony_camera(name):
 def fix_arabic_name(name, url, validator):
     if any('\u0600' <= c <= '\u06FF' for c in name):
         slug = url.rstrip('/').split('/')[-1]
-        slug_name = slug.replace('-', ' ').title().replace('.Html', '').replace('.html', '').strip()
+        slug_name = re.sub(r'[_-]', ' ', slug).title()
+        slug_name = re.sub(r'\.html?$', '', slug_name, flags=re.IGNORECASE).strip()
         if validator(slug_name):
             return slug_name
     return name
@@ -106,23 +116,40 @@ def fix_arabic_name(name, url, validator):
 
 def parse_price(text):
     text = translate_eastern(text)
-    text = re.sub(r'[^\d.,]', '', text).replace(',', '')
+    text = re.sub(r'[^\d.,]', '', text)
+    # remove thousands separator if followed by 3 digits
+    text = re.sub(r',(\d{3})', r'\1', text)
+    text = text.replace(',', '')
     try:
         return float(text)
     except Exception:
         return None
 
 
+def clean_price_text(el):
+    """Extract price from element, preferring SAR prices."""
+    if not el:
+        return None
+    texts = el.get_text(separator=' ', strip=True)
+    # look for patterns like 4849 or 4,849
+    matches = re.findall(r'[\d,،٠-٩]+(?:[.,][\d]+)?', translate_eastern(texts))
+    for m in matches:
+        p = parse_price(m)
+        if p and p > 50:   # ignore tiny numbers (ratings, etc.)
+            return p
+    return None
+
+
 # ─── ZenRows ────────────────────────────────────────────────────────────────
 def zenrows_get(url, wait=8000, retries=2):
     params = {
-        'apikey': ZENROWS_KEY,
-        'url': url,
-        'antibot': 'true',
+        'apikey':        ZENROWS_KEY,
+        'url':           url,
+        'antibot':       'true',
         'premium_proxy': 'true',
-        'js_render': 'true',
+        'js_render':     'true',
         'proxy_country': 'sa',
-        'wait': str(wait),
+        'wait':          str(wait),
     }
     for attempt in range(retries + 1):
         try:
@@ -136,29 +163,24 @@ def zenrows_get(url, wait=8000, retries=2):
     return None
 
 
-# ─── Parsers ─────────────────────────────────────────────────────────────────
+# ─── Our Site (ksa.amt.tv) — Magento ────────────────────────────────────────
 def parse_our_site(product_type):
-    """Scrape ksa.amt.tv — Magento store"""
     base_url = URLS[product_type]['our_site']
     products = []
-    seen = set()
-    page = 1
+    seen     = set()
+    page     = 1
     while page <= 20:
         url = f"{base_url}&p={page}" if page > 1 else base_url
-        log.info(f'[Our Site] Fetching page {page}: {url}')
+        log.info(f'[Our Site] page {page}: {url}')
         html = zenrows_get(url, wait=8000)
         if not html:
             break
-        soup = BeautifulSoup(html, 'lxml')
-        items = soup.select('li.product-item')
-        if not items:
-            items = soup.select('.product-item-info')
-        if not items:
-            break
+        soup      = BeautifulSoup(html, 'lxml')
+        items     = soup.select('li.product-item, .product-item-info')
         new_found = 0
         for item in items:
             try:
-                name_el = item.select_one('.product-item-name a, .product-item-link')
+                name_el  = item.select_one('.product-item-name a, .product-item-link')
                 price_el = item.select_one('.price')
                 link_el  = item.select_one('a.product-item-link, .product-item-name a')
                 if not name_el or not price_el:
@@ -174,11 +196,13 @@ def parse_our_site(product_type):
                 if not validator(name):
                     continue
                 avail_el = item.select_one('.stock, .availability')
-                avail = 'In Stock' if avail_el and 'in-stock' in (avail_el.get('class') or []) else 'Check Site'
+                avail    = 'In Stock'
+                if avail_el:
+                    avail = 'Out of Stock' if 'out' in avail_el.get_text().lower() else 'In Stock'
                 products.append({'name': name, 'price': price, 'availability': avail, 'url': link})
                 new_found += 1
             except Exception as e:
-                log.debug(f'[Our Site] item parse error: {e}')
+                log.debug(f'[Our Site] item error: {e}')
         if new_found == 0:
             break
         page += 1
@@ -186,155 +210,307 @@ def parse_our_site(product_type):
     return products
 
 
+# ─── Qomra (Salla platform) ──────────────────────────────────────────────────
 def parse_qomra(product_type):
-    """Scrape qomra.pro"""
-    base_url = URLS[product_type]['qomra']
-    products = []
-    seen = set()
-    page = 1
+    """
+    Salla platform. Product cards are:
+      <s-product-card-entry ...> or <custom-salla-product-card ...>
+    Name comes from the <a aria-label="..."> on the image link.
+    Price is inside .s-product-card-content or a <span> containing SAR/ر.س
+    """
+    base_url  = URLS[product_type]['qomra']
+    products  = []
+    seen      = set()
+    validator = is_sony_lens if product_type == 'lenses' else is_sony_camera
+    page      = 1
+
     while page <= 20:
-        url = f"{base_url}&page={page}" if page > 1 else base_url
-        log.info(f'[Qomra] Fetching page {page}: {url}')
-        html = zenrows_get(url, wait=10000)
+        url  = f"{base_url}&page={page}" if page > 1 else base_url
+        log.info(f'[Qomra] page {page}: {url}')
+        html = zenrows_get(url, wait=12000)
         if not html:
             break
         soup = BeautifulSoup(html, 'lxml')
-        items = soup.select('.product-card, .product-item, [class*="product"]')
+
+        # Salla wraps each product in a custom element
+        items = soup.select(
+            's-product-card-entry, '
+            'custom-salla-product-card, '
+            '[class*="s-product-card-entry"]'
+        )
+        # fallback: look inside the products-grid wrapper
         if not items:
+            wrapper = soup.select_one('.s-products-list-wrapper, .products-grid, [class*="products-grid"]')
+            if wrapper:
+                items = wrapper.select('div[id], div[class*="product"]')
+
+        if not items:
+            log.warning(f'[Qomra] No items found on page {page}')
             break
+
         new_found = 0
         for item in items:
             try:
-                name_el  = item.select_one('h2, h3, .product-title, .product-name, [class*="title"], [class*="name"]')
-                price_el = item.select_one('.price, [class*="price"]')
-                link_el  = item.select_one('a[href]')
-                if not name_el or not price_el:
+                # Name: aria-label on the image anchor
+                link_el = item.select_one('a[aria-label][href]')
+                if not link_el:
+                    link_el = item.select_one('a[href]')
+                if not link_el:
                     continue
-                name  = name_el.get_text(strip=True)
-                price = parse_price(price_el.get_text(strip=True))
-                link  = link_el['href'] if link_el else ''
+
+                name = link_el.get('aria-label', '').strip()
+                link = link_el.get('href', '').strip()
                 if not link.startswith('http'):
                     link = 'https://qomra.pro' + link
                 if link in seen:
                     continue
                 seen.add(link)
-                validator = is_sony_lens if product_type == 'lenses' else is_sony_camera
+
+                # Fallback name from slug
+                if not name:
+                    slug = link.rstrip('/').split('/')[-1].split('?')[0]
+                    name = re.sub(r'[_-]', ' ', slug).title()
+
                 name = fix_arabic_name(name, link, validator)
                 if not validator(name):
                     continue
-                avail_el = item.select_one('[class*="stock"], [class*="avail"]')
-                avail = 'Out of Stock' if avail_el and 'out' in avail_el.get_text(strip=True).lower() else 'In Stock'
+
+                # Price: find span/div with SAR or ر.س or a number > 50
+                price = None
+                for el in item.select('[class*="price"], [class*="Price"], span, div'):
+                    txt = translate_eastern(el.get_text(strip=True))
+                    if re.search(r'[\d]{3,}', txt):
+                        p = parse_price(txt)
+                        if p and p > 50:
+                            price = p
+                            break
+
+                # Availability
+                avail    = 'In Stock'
+                avail_el = item.select_one('[class*="out-of-stock"], [class*="sold-out"], salla-button[disabled]')
+                if avail_el:
+                    avail = 'Out of Stock'
+                else:
+                    txt_lower = item.get_text().lower()
+                    if 'out of stock' in txt_lower or 'نفد' in item.get_text():
+                        avail = 'Out of Stock'
+
                 products.append({'name': name, 'price': price, 'availability': avail, 'url': link})
                 new_found += 1
             except Exception as e:
-                log.debug(f'[Qomra] item parse error: {e}')
+                log.debug(f'[Qomra] item error: {e}')
+
         if new_found == 0:
             break
         page += 1
+
     log.info(f'[Qomra] {product_type}: {len(products)} products')
     return products
 
 
+# ─── Me Stores ───────────────────────────────────────────────────────────────
 def parse_mestores(product_type):
-    """Scrape mestores.com — paginated with page= param"""
-    base_url = URLS[product_type]['mestores']
-    products = []
-    seen = set()
-    page = 1
+    """
+    Me Stores uses a custom Tailwind/React storefront.
+    Products live inside:
+      div.gallery-root-yVO > div.gallery-items-4Gj > a[href]
+    Each <a> link contains the product slug; name extracted from:
+      - <img alt="..."> inside the card, or
+      - aria-label on the <a>, or
+      - text nodes / h-tags inside the card
+    Price is in a span with the currency symbol or a numeric span.
+    """
+    base_url  = URLS[product_type]['mestores']
+    products  = []
+    seen      = set()
+    validator = is_sony_lens if product_type == 'lenses' else is_sony_camera
+    page      = 1
+
     while page <= 20:
-        url = base_url.format(page=page)
-        log.info(f'[Me Stores] Fetching page {page}: {url}')
-        html = zenrows_get(url, wait=8000)
+        url  = base_url.format(page=page)
+        log.info(f'[Me Stores] page {page}: {url}')
+        html = zenrows_get(url, wait=10000)
         if not html:
             break
         soup = BeautifulSoup(html, 'lxml')
-        items = soup.select('.product-item, .product-card, [class*="product-item"]')
-        if not items:
+
+        # Primary: anchor tags inside gallery grid
+        gallery = soup.select_one(
+            'div[class*="gallery-root"], '
+            'div[class*="infinite-scroll"], '
+            'section[class*="gallery"]'
+        )
+        if gallery:
+            anchors = gallery.select('a[href]')
+        else:
+            # broader fallback
+            anchors = soup.select('a[href*="/en_sa/sony"], a[href*="/en_sa/"]')
+
+        if not anchors:
+            log.warning(f'[Me Stores] No anchors on page {page}')
             break
+
         new_found = 0
-        for item in items:
+        for a in anchors:
             try:
-                name_el  = item.select_one('.product-item__title, .product-name, h2, h3, [class*="title"]')
-                price_el = item.select_one('.price, .product-price, [class*="price"]')
-                link_el  = item.select_one('a[href]')
-                if not name_el or not price_el:
+                link = a.get('href', '').strip()
+                if not link:
                     continue
-                name  = name_el.get_text(strip=True)
-                price = parse_price(price_el.get_text(strip=True))
-                link  = link_el['href'] if link_el else ''
                 if not link.startswith('http'):
                     link = 'https://mestores.com' + link
+                # skip non-product links (categories, banners)
+                if link.count('/') < 5:
+                    continue
                 if link in seen:
                     continue
                 seen.add(link)
-                validator = is_sony_lens if product_type == 'lenses' else is_sony_camera
+
+                # Name from img alt, aria-label, or slug
+                name = ''
+                img_el = a.select_one('img[alt]')
+                if img_el:
+                    name = img_el.get('alt', '').strip()
+                if not name:
+                    name = a.get('aria-label', '').strip()
+                if not name:
+                    # try heading tags inside
+                    h = a.select_one('h1,h2,h3,h4,p')
+                    if h:
+                        name = h.get_text(strip=True)
+                if not name:
+                    slug = link.rstrip('/').split('/')[-1].split('?')[0]
+                    name = re.sub(r'[_-]', ' ', slug).title()
+
                 name = fix_arabic_name(name, link, validator)
                 if not validator(name):
                     continue
-                avail_el = item.select_one('[class*="stock"], [class*="avail"], [class*="sold"]')
-                avail = 'Out of Stock' if avail_el and ('out' in avail_el.get_text(strip=True).lower() or 'sold' in avail_el.get_text(strip=True).lower()) else 'In Stock'
+
+                # Price: look for numeric spans inside card
+                price = None
+                for el in a.select('span, div, p'):
+                    txt = translate_eastern(el.get_text(strip=True))
+                    if re.search(r'\d{3,}', txt):
+                        p = parse_price(txt)
+                        if p and p > 50:
+                            price = p
+                            break
+
+                # Availability
+                avail    = 'In Stock'
+                card_txt = a.get_text().lower()
+                if 'out of stock' in card_txt or 'notify me' in card_txt or 'نفد' in a.get_text():
+                    avail = 'Out of Stock'
+
                 products.append({'name': name, 'price': price, 'availability': avail, 'url': link})
                 new_found += 1
             except Exception as e:
-                log.debug(f'[Me Stores] item parse error: {e}')
+                log.debug(f'[Me Stores] item error: {e}')
+
         if new_found == 0:
             break
         page += 1
+
     log.info(f'[Me Stores] {product_type}: {len(products)} products')
     return products
 
 
+# ─── Abdulwahed ───────────────────────────────────────────────────────────────
 def parse_abdulwahed(product_type):
-    """Scrape abdulwahed.com — filter Sony products by name"""
-    base_url = URLS[product_type]['abdulwahed']
-    products = []
-    seen = set()
-    page = 1
+    """
+    Abdulwahed uses a Tailwind grid.
+    Product cards are div.relative inside div[class*="grid-cols-2"] or similar grid.
+    Name from <img alt="...">.
+    Price from a span containing digits after removing non-numeric chars.
+    Filter Sony by name or alt text.
+    """
+    base_url  = URLS[product_type]['abdulwahed']
+    products  = []
+    seen      = set()
+    validator = is_sony_lens if product_type == 'lenses' else is_sony_camera
+    page      = 1
+
     while page <= 20:
-        url = f"{base_url}?page={page}" if page > 1 else base_url
-        log.info(f'[Abdulwahed] Fetching page {page}: {url}')
-        html = zenrows_get(url, wait=8000)
+        url  = f"{base_url}?page={page}" if page > 1 else base_url
+        log.info(f'[Abdulwahed] page {page}: {url}')
+        html = zenrows_get(url, wait=10000)
         if not html:
             break
         soup = BeautifulSoup(html, 'lxml')
-        items = soup.select('.product-item, .product-card, .product, [class*="product-item"]')
-        if not items:
+
+        # Find product cards: each card is a div.relative with an img and price
+        # The grid container has class grid grid-cols-2 or similar
+        cards = soup.select(
+            'div[class*="grid-cols-2"] > div, '
+            'div[class*="grid-cols-3"] > div, '
+            'div[class*="grid-cols-4"] > div, '
+            'div[class*="sm:grid-cols"] > div'
+        )
+        # fallback: any div containing both an img[alt] and a price-like span
+        if not cards:
+            cards = [d for d in soup.select('div') if d.select_one('img[alt]') and
+                     re.search(r'\d{3,}', d.get_text())]
+
+        if not cards:
+            log.warning(f'[Abdulwahed] No cards on page {page}')
             break
+
         new_found = 0
-        for item in items:
+        for card in cards:
             try:
-                name_el  = item.select_one('h2, h3, .product-name, .product-title, [class*="name"], [class*="title"]')
-                price_el = item.select_one('.price, [class*="price"]')
-                link_el  = item.select_one('a[href]')
-                if not name_el or not price_el:
+                # Name from img alt
+                img_el = card.select_one('img[alt]')
+                if not img_el:
                     continue
-                name  = name_el.get_text(strip=True)
-                price = parse_price(price_el.get_text(strip=True))
-                link  = link_el['href'] if link_el else ''
-                if not link.startswith('http'):
-                    link = 'https://www.abdulwahed.com' + link
+                name = img_el.get('alt', '').strip()
+                if not name:
+                    continue
+
+                # Link
+                link_el = card.select_one('a[href]')
+                link    = ''
+                if link_el:
+                    link = link_el.get('href', '').strip()
+                    if not link.startswith('http'):
+                        link = 'https://www.abdulwahed.com' + link
+                if not link:
+                    continue
                 if link in seen:
                     continue
                 seen.add(link)
-                # Must be Sony
-                if 'sony' not in normalize(name) and 'sony' not in normalize(link):
-                    # check brand element
-                    brand_el = item.select_one('[class*="brand"], [class*="manufacturer"]')
-                    if not brand_el or 'sony' not in normalize(brand_el.get_text()):
-                        continue
-                validator = is_sony_lens if product_type == 'lenses' else is_sony_camera
+
+                # Sony filter — must mention Sony in name or alt
+                if 'sony' not in normalize(name):
+                    continue
+
                 name = fix_arabic_name(name, link, validator)
                 if not validator(name):
                     continue
-                avail_el = item.select_one('[class*="stock"], [class*="avail"]')
-                avail = 'Out of Stock' if avail_el and 'out' in avail_el.get_text(strip=True).lower() else 'In Stock'
+
+                # Price
+                price = None
+                for el in card.select('span, div, p'):
+                    txt = translate_eastern(el.get_text(strip=True))
+                    if re.search(r'\d{3,}', txt):
+                        p = parse_price(txt)
+                        if p and 100 < p < 200000:
+                            price = p
+                            break
+
+                # Availability
+                avail    = 'In Stock'
+                card_txt = card.get_text().lower()
+                if 'out of stock' in card_txt or 'notify' in card_txt or 'unavailable' in card_txt:
+                    avail = 'Out of Stock'
+
                 products.append({'name': name, 'price': price, 'availability': avail, 'url': link})
                 new_found += 1
             except Exception as e:
-                log.debug(f'[Abdulwahed] item parse error: {e}')
+                log.debug(f'[Abdulwahed] item error: {e}')
+
         if new_found == 0:
             break
         page += 1
+
     log.info(f'[Abdulwahed] {product_type}: {len(products)} products')
     return products
 
@@ -354,25 +530,18 @@ def extract_aperture(name):
 
 def match_lens_score(a, b):
     na, nb = normalize(a), normalize(b)
-    score = 0
     fa, fb = extract_focal(na), extract_focal(nb)
-    if fa and fb:
-        if fa != fb:
-            return 0
-        score += 80
+    if not fa or not fb or fa != fb:
+        return 0
+    score = 80
     aa, ab = extract_aperture(na), extract_aperture(nb)
-    if aa and ab:
-        if abs(aa - ab) < 0.1:
-            score += 30
-    mounts = ['fe ', 'e-mount', 'e mount', 'a-mount', 'full frame', 'aps-c']
-    for mt in mounts:
+    if aa and ab and abs(aa - ab) < 0.1:
+        score += 30
+    for mt in ['fe ', 'e-mount', 'e mount', 'a-mount']:
         if mt in na and mt in nb:
             score += 25
             break
-        elif mt in na or mt in nb:
-            pass
-    series = ['g master', 'gm', 'g lens', 'zeiss']
-    for s in series:
+    for s in ['g master', 'gm', 'g lens', 'zeiss']:
         if s in na and s in nb:
             score += 15
     return score
@@ -380,14 +549,10 @@ def match_lens_score(a, b):
 
 def match_camera_score(a, b):
     na, nb = normalize(a), normalize(b)
-    # extract model numbers
-    models_a = set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-\w+|dsc-\w+', na))
-    models_b = set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-\w+|dsc-\w+', nb))
-    if models_a and models_b and models_a & models_b:
-        return 100
+    models_a = set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-[\w-]+|dsc-[\w-]+', na))
+    models_b = set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-[\w-]+|dsc-[\w-]+', nb))
     if models_a and models_b:
-        return 0
-    # fallback word overlap
+        return 100 if models_a & models_b else 0
     words_a = set(na.split())
     words_b = set(nb.split())
     overlap = len(words_a & words_b)
@@ -395,40 +560,30 @@ def match_camera_score(a, b):
 
 
 def find_match(our_product, competitor_products, product_type):
+    scorer     = match_lens_score if product_type == 'lenses' else match_camera_score
     best_score = 0
     best_match = None
-    scorer = match_lens_score if product_type == 'lenses' else match_camera_score
     for cp in competitor_products:
         score = scorer(our_product['name'], cp['name'])
         if score > best_score:
             best_score = score
             best_match = cp
-    if best_score >= 80:
-        return best_match
-    return None
+    return best_match if best_score >= 80 else None
 
 
 # ─── Build Comparison Rows ───────────────────────────────────────────────────
 def build_rows(our_products, competitor_data, product_type):
-    """
-    competitor_data = {
-        'Qomra': [...],
-        'Me Stores': [...],
-        'Abdulwahed': [...],
-    }
-    Returns list of row dicts.
-    """
-    rows = []
+    rows      = []
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
-    used_competitor_urls = {src: set() for src in COMPETITORS}
+    used_urls = {src: set() for src in COMPETITORS}
 
     for our in our_products:
         row = {
-            'timestamp': timestamp,
-            'name': our['name'],
-            'our_price': our['price'],
+            'timestamp':        timestamp,
+            'name':             our['name'],
+            'our_price':        our['price'],
             'our_availability': our['availability'],
-            'our_url': our['url'],
+            'our_url':          our['url'],
         }
         prices_for_lowest = []
         if our['price'] and our['availability'] == 'In Stock':
@@ -437,64 +592,43 @@ def build_rows(our_products, competitor_data, product_type):
         for src in COMPETITORS:
             match = find_match(our, competitor_data.get(src, []), product_type)
             if match:
-                used_competitor_urls[src].add(match['url'])
-                diff = round(match['price'] - our['price'], 2) if match['price'] and our['price'] else None
-                if diff is None:
-                    status = 'Not listed'
-                elif diff > 0:
-                    status = 'Cheaper than competitor'
-                elif diff < 0:
-                    status = 'More expensive'
-                else:
-                    status = 'Same price'
-                row[src] = {
-                    'url': match['url'],
-                    'price': match['price'],
-                    'availability': match['availability'],
-                    'diff': diff,
-                    'status': status,
-                }
+                used_urls[src].add(match['url'])
+                diff   = round(match['price'] - our['price'], 2) if match['price'] and our['price'] else None
+                status = ('Cheaper than competitor' if diff and diff > 0 else
+                          'More expensive'          if diff and diff < 0 else
+                          'Same price'              if diff == 0          else 'Not listed')
+                row[src] = {'url': match['url'], 'price': match['price'],
+                            'availability': match['availability'], 'diff': diff, 'status': status}
                 if match['price'] and match['availability'] == 'In Stock':
                     prices_for_lowest.append((src, match['price'], match['url']))
             else:
                 row[src] = {'url': '', 'price': None, 'availability': '', 'diff': None, 'status': 'Not listed'}
 
-        # Summary
         if prices_for_lowest:
-            cheapest = min(prices_for_lowest, key=lambda x: x[1])
-            row['lowest_price']     = cheapest[1]
-            row['cheapest_brand']   = cheapest[0]
-            row['cheapest_link']    = cheapest[2]
-            our_p = our['price'] or 0
-            row['our_diff_vs_cheapest'] = round(our_p - cheapest[1], 2)
+            cheapest                    = min(prices_for_lowest, key=lambda x: x[1])
+            row['lowest_price']         = cheapest[1]
+            row['cheapest_brand']       = cheapest[0]
+            row['cheapest_link']        = cheapest[2]
+            row['our_diff_vs_cheapest'] = round((our['price'] or 0) - cheapest[1], 2)
         else:
-            row['lowest_price']          = None
-            row['cheapest_brand']        = ''
-            row['cheapest_link']         = ''
-            row['our_diff_vs_cheapest']  = None
+            row['lowest_price'] = row['cheapest_brand'] = row['cheapest_link'] = None
+            row['our_diff_vs_cheapest'] = None
 
         rows.append(row)
 
-    # Competitor-only products (not matched to any of our products)
+    # Competitor-only products
     for src in COMPETITORS:
         for cp in competitor_data.get(src, []):
-            if cp['url'] in used_competitor_urls[src]:
+            if cp['url'] in used_urls[src]:
                 continue
-            row = {
-                'timestamp': timestamp,
-                'name': cp['name'],
-                'our_price': None,
-                'our_availability': 'Not listed',
-                'our_url': '',
-            }
-            for other_src in COMPETITORS:
-                if other_src == src:
-                    row[other_src] = {
-                        'url': cp['url'], 'price': cp['price'],
-                        'availability': cp['availability'], 'diff': None, 'status': 'Not listed',
-                    }
+            row = {'timestamp': timestamp, 'name': cp['name'],
+                   'our_price': None, 'our_availability': 'Not listed', 'our_url': ''}
+            for other in COMPETITORS:
+                if other == src:
+                    row[other] = {'url': cp['url'], 'price': cp['price'],
+                                  'availability': cp['availability'], 'diff': None, 'status': 'Not listed'}
                 else:
-                    row[other_src] = {'url': '', 'price': None, 'availability': '', 'diff': None, 'status': 'Not listed'}
+                    row[other] = {'url': '', 'price': None, 'availability': '', 'diff': None, 'status': 'Not listed'}
             row['lowest_price']         = cp['price']
             row['cheapest_brand']       = src
             row['cheapest_link']        = cp['url']
@@ -505,40 +639,6 @@ def build_rows(our_products, competitor_data, product_type):
 
 
 # ─── Google Sheets ───────────────────────────────────────────────────────────
-def get_gspread_client():
-    sa_info = json.loads(SA_JSON)
-    scopes  = ['https://www.googleapis.com/auth/spreadsheets',
-               'https://www.googleapis.com/auth/drive']
-    creds  = Credentials.from_service_account_info(sa_info, scopes=scopes)
-    return gspread.authorize(creds)
-
-
-def row_to_list(row):
-    out = [
-        row['timestamp'],
-        row['name'],
-        row.get('our_price', ''),
-        row.get('our_availability', ''),
-        row.get('our_url', ''),
-    ]
-    for src in COMPETITORS:
-        d = row.get(src, {})
-        out += [
-            d.get('url', ''),
-            d.get('price', ''),
-            d.get('availability', ''),
-            d.get('diff', ''),
-            d.get('status', ''),
-        ]
-    out += [
-        row.get('lowest_price', ''),
-        row.get('cheapest_brand', ''),
-        row.get('cheapest_link', ''),
-        row.get('our_diff_vs_cheapest', ''),
-    ]
-    return out
-
-
 GROUP_HEADERS = (
     ['Timestamp', 'Product Name', '', '', ''] +
     ['Our Site (ksa.amt.tv)', '', '', '', ''] +
@@ -554,14 +654,35 @@ COL_HEADERS = (
     ['Lowest Price (SAR)', 'Cheapest Brand', 'Cheapest Link', 'Our Price Diff vs Cheapest']
 )
 
-SUMMARY_HEADERS = ['Source', 'Total Products', 'Cheaper Than Us', 'More Expensive', 'Same Price', 'Not Listed', 'Updated']
+SUMMARY_HEADERS = ['Source', 'Total Products', 'Cheaper Than Us', 'More Expensive',
+                   'Same Price', 'Not Listed', 'Updated']
+
+
+def get_gspread_client():
+    sa_info = json.loads(SA_JSON)
+    scopes  = ['https://www.googleapis.com/auth/spreadsheets',
+               'https://www.googleapis.com/auth/drive']
+    creds   = Credentials.from_service_account_info(sa_info, scopes=scopes)
+    return gspread.authorize(creds)
+
+
+def row_to_list(row):
+    out = [row['timestamp'], row['name'],
+           row.get('our_price', ''), row.get('our_availability', ''), row.get('our_url', '')]
+    for src in COMPETITORS:
+        d = row.get(src, {})
+        out += [d.get('url', ''), d.get('price', ''), d.get('availability', ''),
+                d.get('diff', ''), d.get('status', '')]
+    out += [row.get('lowest_price', ''), row.get('cheapest_brand', ''),
+            row.get('cheapest_link', ''), row.get('our_diff_vs_cheapest', '')]
+    return out
 
 
 def compute_summary(rows, timestamp):
     summary = []
     for src in SOURCES:
         if src == 'Our Site (ksa.amt.tv)':
-            total   = sum(1 for r in rows if r.get('our_price'))
+            total = sum(1 for r in rows if r.get('our_price'))
             cheaper = more_exp = same = not_listed = 0
         else:
             total      = sum(1 for r in rows if r.get(src, {}).get('price'))
@@ -573,82 +694,70 @@ def compute_summary(rows, timestamp):
     return summary
 
 
-def color_status_cells(ws, rows):
-    """Apply conditional colors to Status columns."""
-    status_cols = []  # 1-indexed col positions of Status cells
-    # Status is at col 10, 15, 20 (1-indexed), i.e. after 5 our-site cols + each competitor group of 5
-    for i, _ in enumerate(COMPETITORS):
-        status_cols.append(5 + (i + 1) * 5)  # cols 10, 15, 20
-
+def color_status_cells(ws, rows, spreadsheet):
     color_map = {
         'Cheaper than competitor': {'red': 0.20, 'green': 0.73, 'blue': 0.40},
         'More expensive':          {'red': 0.91, 'green': 0.27, 'blue': 0.27},
         'Same price':              {'red': 1.0,  'green': 0.90, 'blue': 0.20},
         'Not listed':              {'red': 0.85, 'green': 0.85, 'blue': 0.85},
     }
-
+    # Status columns are at positions 10, 15, 20 (1-indexed) → 0-indexed: 9, 14, 19
+    status_col_indices = [9, 14, 19]
     requests_body = []
     for row_idx, row in enumerate(rows):
-        sheet_row = row_idx + 3  # data starts at row 3
+        sheet_row = row_idx + 2  # data starts at row 3 (0-indexed row 2)
         for src_idx, src in enumerate(COMPETITORS):
             status = row.get(src, {}).get('status', '')
             color  = color_map.get(status)
             if not color:
                 continue
-            col = status_cols[src_idx]
+            col = status_col_indices[src_idx]
             requests_body.append({
                 'repeatCell': {
                     'range': {
-                        'sheetId': ws.id,
-                        'startRowIndex': sheet_row - 1,
-                        'endRowIndex': sheet_row,
-                        'startColumnIndex': col - 1,
-                        'endColumnIndex': col,
+                        'sheetId':          ws.id,
+                        'startRowIndex':    sheet_row,
+                        'endRowIndex':      sheet_row + 1,
+                        'startColumnIndex': col,
+                        'endColumnIndex':   col + 1,
                     },
-                    'cell': {'userEnteredFormat': {'backgroundColor': color}},
+                    'cell':   {'userEnteredFormat': {'backgroundColor': color}},
                     'fields': 'userEnteredFormat.backgroundColor',
                 }
             })
-    return requests_body
+    if requests_body:
+        spreadsheet.batch_update({'requests': requests_body})
 
 
 def write_sheet(client, product_type, rows):
-    tab_name     = 'Lenses'     if product_type == 'lenses'  else 'Cameras'
-    summary_name = 'Lenses Summary' if product_type == 'lenses' else 'Cameras Summary'
+    tab_name     = 'Lenses'          if product_type == 'lenses' else 'Cameras'
+    summary_name = 'Lenses Summary'  if product_type == 'lenses' else 'Cameras Summary'
     timestamp    = datetime.now().strftime('%Y-%m-%d %H:%M')
+    sh           = client.open_by_key(GSHEET_ID)
 
-    sh = client.open_by_key(GSHEET_ID)
-
-    # ── Main tab ──────────────────────────────────────────────────────────
+    # Main tab
     try:
         ws = sh.worksheet(tab_name)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title=tab_name, rows=500, cols=30)
-
     ws.clear()
     data = [GROUP_HEADERS, COL_HEADERS] + [row_to_list(r) for r in rows]
-    ws.update('A1', data, value_input_option='USER_ENTERED')
-
-    # Color status cells
-    color_requests = color_status_cells(ws, rows)
-    if color_requests:
-        sh.batch_update({'requests': color_requests})
-
+    ws.update(values=data, range_name='A1', value_input_option='USER_ENTERED')
+    color_status_cells(ws, rows, sh)
     log.info(f'Written {len(rows)} rows to [{tab_name}]')
 
-    # ── Summary tab ───────────────────────────────────────────────────────
+    # Summary tab
     try:
         ws_s = sh.worksheet(summary_name)
     except gspread.WorksheetNotFound:
         ws_s = sh.add_worksheet(title=summary_name, rows=20, cols=10)
-
     ws_s.clear()
-    summary_rows = compute_summary(rows, timestamp)
-    ws_s.update('A1', [SUMMARY_HEADERS] + summary_rows, value_input_option='USER_ENTERED')
+    ws_s.update(values=[SUMMARY_HEADERS] + compute_summary(rows, timestamp),
+                range_name='A1', value_input_option='USER_ENTERED')
     log.info(f'Written summary to [{summary_name}]')
 
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+# ─── Main ────────────────────────────────────────────────────────────────────
 def scrape_source(fn, label):
     try:
         return fn()
@@ -664,10 +773,10 @@ def main():
     for product_type in ['lenses', 'cameras']:
         log.info(f'\n─── Scraping {product_type.upper()} ───')
 
-        our_products = scrape_source(lambda: parse_our_site(product_type), 'Our Site')
-        qomra        = scrape_source(lambda: parse_qomra(product_type),     'Qomra')
-        mestores     = scrape_source(lambda: parse_mestores(product_type),  'Me Stores')
-        abdulwahed   = scrape_source(lambda: parse_abdulwahed(product_type),'Abdulwahed')
+        our_products = scrape_source(lambda pt=product_type: parse_our_site(pt),    'Our Site')
+        qomra        = scrape_source(lambda pt=product_type: parse_qomra(pt),       'Qomra')
+        mestores     = scrape_source(lambda pt=product_type: parse_mestores(pt),     'Me Stores')
+        abdulwahed   = scrape_source(lambda pt=product_type: parse_abdulwahed(pt),   'Abdulwahed')
 
         competitor_data = {
             'Qomra':      qomra,
@@ -677,7 +786,7 @@ def main():
 
         rows = build_rows(our_products, competitor_data, product_type)
         write_sheet(client, product_type, rows)
-        log.info(f'[{product_type}] Done — {len(rows)} comparison rows written.')
+        log.info(f'[{product_type}] Done — {len(rows)} rows written.')
 
     log.info('=== Scraper Finished ===')
 
