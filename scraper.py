@@ -213,10 +213,12 @@ def parse_our_site(product_type):
 # ─── Qomra (Salla platform) ──────────────────────────────────────────────────
 def parse_qomra(product_type):
     """
-    Salla platform. Product cards are:
-      <s-product-card-entry ...> or <custom-salla-product-card ...>
-    Name comes from the <a aria-label="..."> on the image link.
-    Price is inside .s-product-card-content or a <span> containing SAR/ر.س
+    Salla platform.
+    Container: custom-salla-product-card  (or s-product-card-entry)
+    Name:      h1.s-product-card-content-title > a  (text content)
+    Link:      same <a> href
+    Price:     .s-product-card-sale-price h4  (first number = sale price)
+    Avail:     presence of 's-product-card-out-of-stock' class or 'نفد' text
     """
     base_url  = URLS[product_type]['qomra']
     products  = []
@@ -232,41 +234,34 @@ def parse_qomra(product_type):
             break
         soup = BeautifulSoup(html, 'lxml')
 
-        # Salla wraps each product in a custom element
-        items = soup.select(
-            's-product-card-entry, '
-            'custom-salla-product-card, '
-            '[class*="s-product-card-entry"]'
-        )
-        # fallback: look inside the products-grid wrapper
+        # Each product is a <custom-salla-product-card> custom element
+        items = soup.select('custom-salla-product-card, s-product-card-entry')
         if not items:
-            wrapper = soup.select_one('.s-products-list-wrapper, .products-grid, [class*="products-grid"]')
-            if wrapper:
-                items = wrapper.select('div[id], div[class*="product"]')
-
+            # fallback: find all elements with s-product-card-entry class
+            items = soup.select('[class~="s-product-card-entry"]')
         if not items:
-            log.warning(f'[Qomra] No items found on page {page}')
+            log.warning(f'[Qomra] No items on page {page}')
             break
 
         new_found = 0
         for item in items:
             try:
-                # Name: aria-label on the image anchor
-                link_el = item.select_one('a[aria-label][href]')
-                if not link_el:
-                    link_el = item.select_one('a[href]')
-                if not link_el:
+                # Name from h1.s-product-card-content-title > a
+                title_el = item.select_one('h1.s-product-card-content-title a, h2.s-product-card-content-title a')
+                if not title_el:
+                    # fallback: any <a> with meaningful text
+                    title_el = item.select_one('.s-product-card-content a[href]')
+                if not title_el:
                     continue
 
-                name = link_el.get('aria-label', '').strip()
-                link = link_el.get('href', '').strip()
+                name = title_el.get_text(strip=True)
+                link = title_el.get('href', '').strip()
                 if not link.startswith('http'):
                     link = 'https://qomra.pro' + link
                 if link in seen:
                     continue
                 seen.add(link)
 
-                # Fallback name from slug
                 if not name:
                     slug = link.rstrip('/').split('/')[-1].split('?')[0]
                     name = re.sub(r'[_-]', ' ', slug).title()
@@ -275,25 +270,26 @@ def parse_qomra(product_type):
                 if not validator(name):
                     continue
 
-                # Price: find span/div with SAR or ر.س or a number > 50
-                price = None
-                for el in item.select('[class*="price"], [class*="Price"], span, div'):
-                    txt = translate_eastern(el.get_text(strip=True))
-                    if re.search(r'[\d]{3,}', txt):
-                        p = parse_price(txt)
-                        if p and p > 50:
+                # Price: first h4 inside .s-product-card-sale-price
+                price    = None
+                price_el = item.select_one('.s-product-card-sale-price h4, .s-product-card-sale-price span')
+                if price_el:
+                    price = parse_price(translate_eastern(price_el.get_text(strip=True)))
+                if not price:
+                    # broader fallback
+                    for el in item.select('h4, [class*="price"]'):
+                        txt = translate_eastern(el.get_text(strip=True))
+                        p   = parse_price(txt)
+                        if p and p > 100:
                             price = p
                             break
 
                 # Availability
                 avail    = 'In Stock'
-                avail_el = item.select_one('[class*="out-of-stock"], [class*="sold-out"], salla-button[disabled]')
-                if avail_el:
+                card_txt = item.get_text()
+                if ('out of stock' in card_txt.lower() or 'نفد' in card_txt
+                        or item.select_one('[class*="out-of-stock"], [class*="sold-out"]')):
                     avail = 'Out of Stock'
-                else:
-                    txt_lower = item.get_text().lower()
-                    if 'out of stock' in txt_lower or 'نفد' in item.get_text():
-                        avail = 'Out of Stock'
 
                 products.append({'name': name, 'price': price, 'availability': avail, 'url': link})
                 new_found += 1
@@ -311,14 +307,11 @@ def parse_qomra(product_type):
 # ─── Me Stores ───────────────────────────────────────────────────────────────
 def parse_mestores(product_type):
     """
-    Me Stores uses a custom Tailwind/React storefront.
-    Products live inside:
-      div.gallery-root-yVO > div.gallery-items-4Gj > a[href]
-    Each <a> link contains the product slug; name extracted from:
-      - <img alt="..."> inside the card, or
-      - aria-label on the <a>, or
-      - text nodes / h-tags inside the card
-    Price is in a span with the currency symbol or a numeric span.
+    Me Stores custom React storefront.
+    Grid:   div.gallery-root-yVO > div.gallery-items-4Gj > a[href]
+    Name:   img[alt] inside the card  (full product name in alt text)
+    Price:  span.productCard-module-priceAmount-vpp  (contains "SAR 5,999")
+    Avail:  'Out of stock' button text or 'Notify Me' button
     """
     base_url  = URLS[product_type]['mestores']
     products  = []
@@ -329,22 +322,20 @@ def parse_mestores(product_type):
     while page <= 20:
         url  = base_url.format(page=page)
         log.info(f'[Me Stores] page {page}: {url}')
-        html = zenrows_get(url, wait=10000)
+        html = zenrows_get(url, wait=12000)
         if not html:
             break
         soup = BeautifulSoup(html, 'lxml')
 
-        # Primary: anchor tags inside gallery grid
-        gallery = soup.select_one(
-            'div[class*="gallery-root"], '
-            'div[class*="infinite-scroll"], '
-            'section[class*="gallery"]'
-        )
-        if gallery:
-            anchors = gallery.select('a[href]')
-        else:
-            # broader fallback
-            anchors = soup.select('a[href*="/en_sa/sony"], a[href*="/en_sa/"]')
+        # Find all product anchor tags in the gallery grid
+        # The gallery uses class names with hashed suffixes like gallery-root-yVO
+        anchors = soup.select('a[href*="/en_sa/sony"]')
+        if not anchors:
+            # broader: any <a> inside gallery-like container
+            gallery = soup.select_one('[class*="gallery-root"], [class*="infinite-scroll"]')
+            if gallery:
+                anchors = [a for a in gallery.select('a[href]')
+                           if a.get('href', '').startswith('/en_sa/') or 'mestores.com/en_sa/' in a.get('href', '')]
 
         if not anchors:
             log.warning(f'[Me Stores] No anchors on page {page}')
@@ -358,25 +349,32 @@ def parse_mestores(product_type):
                     continue
                 if not link.startswith('http'):
                     link = 'https://mestores.com' + link
-                # skip non-product links (categories, banners)
-                if link.count('/') < 5:
+                # skip non-product pages (category pages have fewer path segments)
+                path_parts = [p for p in link.replace('https://mestores.com', '').split('/') if p]
+                if len(path_parts) < 3:
                     continue
                 if link in seen:
                     continue
                 seen.add(link)
 
-                # Name from img alt, aria-label, or slug
+                # Name: prefer the longest img[alt] inside the card
                 name = ''
-                img_el = a.select_one('img[alt]')
-                if img_el:
-                    name = img_el.get('alt', '').strip()
+                best_alt_len = 0
+                for img in a.select('img[alt]'):
+                    alt = img.get('alt', '').strip()
+                    # skip payment logos (tabby, tamara, star icons)
+                    if alt.lower() in ('tabby', 'tamara', 'sar', '') or len(alt) < 10:
+                        continue
+                    if len(alt) > best_alt_len:
+                        name = alt
+                        best_alt_len = len(alt)
+
                 if not name:
-                    name = a.get('aria-label', '').strip()
-                if not name:
-                    # try heading tags inside
-                    h = a.select_one('h1,h2,h3,h4,p')
-                    if h:
-                        name = h.get_text(strip=True)
+                    # fallback: tooltip span has full name
+                    tip = a.select_one('[class*="tooltipText"]')
+                    if tip:
+                        name = tip.get_text(strip=True)
+
                 if not name:
                     slug = link.rstrip('/').split('/')[-1].split('?')[0]
                     name = re.sub(r'[_-]', ' ', slug).title()
@@ -385,13 +383,16 @@ def parse_mestores(product_type):
                 if not validator(name):
                     continue
 
-                # Price: look for numeric spans inside card
-                price = None
-                for el in a.select('span, div, p'):
-                    txt = translate_eastern(el.get_text(strip=True))
-                    if re.search(r'\d{3,}', txt):
-                        p = parse_price(txt)
-                        if p and p > 50:
+                # Price: span with class containing 'priceAmount'
+                price    = None
+                price_el = a.select_one('[class*="priceAmount"], [class*="priceValue"]')
+                if price_el:
+                    price = parse_price(translate_eastern(price_el.get_text(strip=True)))
+                if not price:
+                    for el in a.select('span'):
+                        txt = translate_eastern(el.get_text(strip=True))
+                        p   = parse_price(txt)
+                        if p and p > 100:
                             price = p
                             break
 
