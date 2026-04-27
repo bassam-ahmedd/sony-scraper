@@ -101,6 +101,11 @@ def plain(url,ssl=True,retries=2):
 def opencart_parse(html, base_url, label, validator):
     soup=BeautifulSoup(html,'lxml')
     items=soup.select('.product-thumb,.product-layout,[class*="product-item"]')
+    log.info(f'[{label}] opencart_parse found {len(items)} raw items')
+    if not items:
+        body=soup.find('body')
+        snippet=str(body)[:500] if body else html[:500]
+        log.warning(f'[{label}] HTML snippet: {snippet[:300]}')
     results=[]
     seen=set()
     for item in items:
@@ -124,6 +129,12 @@ def opencart_parse(html, base_url, label, validator):
 def salla_parse(html, base_url, label, validator):
     soup=BeautifulSoup(html,'lxml')
     items=soup.select('custom-salla-product-card,s-product-card-entry,[class~="s-product-card-entry"]')
+    log.info(f'[{label}] salla_parse found {len(items)} raw items')
+    if not items:
+        # Log first 500 chars of body to help debug
+        body=soup.find('body')
+        snippet=str(body)[:500] if body else html[:500]
+        log.warning(f'[{label}] HTML snippet: {snippet[:300]}')
     results=[]
     seen=set()
     for item in items:
@@ -207,7 +218,11 @@ def parse_mestores(pt):
         if not anchors:
             g=soup.select_one('[class*="gallery-root"],[class*="infinite-scroll"]')
             if g: anchors=[a for a in g.select('a[href]') if '/en_sa/' in a.get('href','')]
-        if not anchors: log.warning(f'[Me Stores] No anchors p{page}'); break
+        log.info(f'[Me Stores] found {len(anchors)} anchors on page {page}')
+        if not anchors:
+            body=soup.find('body'); snippet=str(body)[:400] if body else html[:400]
+            log.warning(f'[Me Stores] HTML snippet: {snippet[:300]}')
+            break
         nf=0
         for a in anchors:
             try:
@@ -490,7 +505,9 @@ def build_rows(our,comp_data,pt):
     return rows
 
 # ── Google Sheets ─────────────────────────────────────────────────────────────
-GH=['Timestamp','Product Name','','',''] + ['Our Site (ksa.amt.tv)','','','',''] + sum([[s,'','','',''] for s in COMPETITORS],[]) + ['Summary','','','']
+# Row 1: group headers — cols A-B blank, C-E = Our Site, then 5 cols per competitor, then 4 summary
+GH=['Timestamp','Product Name','Our Site (ksa.amt.tv)','',''] + sum([[s,'','','',''] for s in COMPETITORS],[]) + ['Summary','','','']
+# Row 2: column headers
 CH=['Timestamp','Product Name','Our Price (SAR)','Our Availability','Our Product URL'] + ['Product URL','Price (SAR)','Availability','Price Diff (SAR)','Status']*len(COMPETITORS) + ['Lowest Price (SAR)','Cheapest Brand','Cheapest Link','Our Price Diff vs Cheapest']
 SH=['Source','Total Products','Cheaper Than Us','More Expensive','Same Price','Not Listed','Updated']
 SC={'Cheaper than competitor':{'red':0.20,'green':0.73,'blue':0.40},'More expensive':{'red':0.91,'green':0.27,'blue':0.27},'Same price':{'red':1.0,'green':0.90,'blue':0.20},'Not listed':{'red':0.85,'green':0.85,'blue':0.85}}
@@ -530,7 +547,10 @@ def write_sheet(client,pt,rows):
     ts=datetime.now().strftime('%Y-%m-%d %H:%M'); sh=client.open_by_key(GSHEET_ID)
     try: ws=sh.worksheet(tn)
     except gspread.WorksheetNotFound: ws=sh.add_worksheet(title=tn,rows=500,cols=70)
-    ws.clear(); data=[GH,CH]+[row2list(r) for r in rows]
+    # Resize to clear all old columns before writing
+    sh.batch_update({'requests':[{'updateSheetProperties':{'properties':{'sheetId':ws.id,'gridProperties':{'columnCount':70}},'fields':'gridProperties.columnCount'}}]})
+    ws.clear()
+    data=[GH,CH]+[row2list(r) for r in rows]
     ws.update(values=data,range_name='A1',value_input_option='USER_ENTERED')
     color_cells(ws,rows,sh); log.info(f'Written {len(rows)} rows to [{tn}]')
     try: ws2=sh.worksheet(sn)
