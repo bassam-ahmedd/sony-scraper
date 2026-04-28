@@ -339,8 +339,8 @@ def parse_abdulwahed(pt):
                 ct=card.get_text().lower(); avail='Out of Stock' if 'out of stock' in ct or 'notify' in ct else 'In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Abdulwahed] {e}')
-        log.info(f'[Abdulwahed] page {page} added {nf} products')
-        if nf==0: break
+        log.info(f'[Abdulwahed] page {page} added {nf} products (Sony)')
+        # Don't stop on nf==0 — page may have other brands. Stop only if no cards at all.
         page+=1
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
@@ -360,7 +360,7 @@ def parse_amazon(pt):
             body=soup.find('body'); snippet=str(body)[:400] if body else html[:400]
             log.warning(f'[Amazon SA] HTML snippet: {snippet[:300]}')
             break
-        nf=0
+        nf=0; logged=0
         for item in items:
             try:
                 ne=item.select_one('h2 a span,h2 span'); le=item.select_one('h2 a[href]')
@@ -371,7 +371,7 @@ def parse_amazon(pt):
                 if m: link=f'https://www.amazon.sa/dp/{m.group(1)}'
                 if link in seen: continue
                 seen.add(link)
-                if nf<3: log.info(f'[Amazon SA] candidate: {name[:80]}')
+                if logged<5: log.info(f'[Amazon SA] candidate: {name[:80]}'); logged+=1
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
@@ -380,7 +380,8 @@ def parse_amazon(pt):
                 ae=item.select_one('.a-color-price'); avail='Out of Stock' if ae and 'currently unavailable' in ae.get_text().lower() else 'In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Amazon SA] {e}')
-        if nf==0: break
+        if nf==0 and logged==0: break  # truly empty page
+        if nf==0: break  # sony filter removed all items on this page — stop
         page+=1
     log.info(f'[Amazon SA] {pt}: {len(products)}'); return products
 
@@ -492,12 +493,34 @@ def parse_alamcam(pt):
         log.info(f'[AlamCam] page {page}')
         html=plain(url) or zenrows(url,wait=8000)
         if not html: break
-        r,s=opencart_parse(html,'https://alamcam.sa','AlamCam',val)
-        new=[p for p in r if p['url'] not in seen]
-        for p in new: seen.add(p['url'])
-        products.extend(new)
-        if not new: break
+        soup=BeautifulSoup(html,'lxml')
+        items=soup.select('.product-thumb,.product-layout,[class*="product-item"]')
+        if not items: break
+        nf=0; logged=0
+        for item in items:
+            try:
+                ne=(item.select_one('.caption h4 a') or item.select_one('.product-name a') or
+                    item.select_one('h4 a') or item.select_one('h3 a') or item.select_one('a[href]'))
+                if not ne: continue
+                name=ne.get_text(strip=True); link=ne.get('href','').strip()
+                if not name or len(name)<3: continue
+                if not link.startswith('http'): link='https://alamcam.sa'+link
+                if link in seen: continue
+                seen.add(link)
+                if logged<3: log.info(f'[AlamCam] candidate: {name[:80]}'); logged+=1
+                # Must be Sony product
+                if 'sony' not in norm(name): continue
+                name=fix_arabic(name,link,val)
+                if not val(name): continue
+                pe=item.select_one('.price,[class*="price"]')
+                price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
+                avail='Out of Stock' if 'out of stock' in item.get_text().lower() else 'In Stock'
+                products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
+            except Exception as e: log.debug(f'[AlamCam] {e}')
+        log.info(f'[AlamCam] page {page}: {nf} Sony products')
+        if not items: break
         page+=1
+    log.info(f'[AlamCam] {pt}: {len(products)}'); return products
     log.info(f'[AlamCam] {pt}: {len(products)}'); return products
 
 # ── CameraBox ─────────────────────────────────────────────────────────────────
