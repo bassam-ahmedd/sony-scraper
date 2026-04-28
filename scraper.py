@@ -71,10 +71,16 @@ def fix_arabic(name,url,val):
         if val(sn): return sn
     return name
 def pparse(text):
-    t=tr_east(str(text)); t=re.sub(r'[^\d.,]','',t); t=re.sub(r',(\d{3})',r'\1',t); t=t.replace(',','').split('.')[0]
-    try:
-        v=float(t); return v if v>50 else None
-    except: return None
+    t=tr_east(str(text))
+    # Find all number patterns (handles SAR 4,849.00 and ر.س 4٬849)
+    nums=re.findall(r'[\d]+(?:[,،][\d]+)*(?:\.[\d]+)?', t)
+    for n in nums:
+        clean=n.replace(',','').replace('،','').split('.')[0]
+        try:
+            v=float(clean)
+            if v>100: return v  # skip small numbers like ratings/percentages
+        except: continue
+    return None
 
 def zenrows(url,wait=8000,scroll=False,retries=2):
     p={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true','js_render':'true','proxy_country':'sa','wait':str(wait)}
@@ -108,17 +114,26 @@ def opencart_parse(html, base_url, label, validator):
         log.warning(f'[{label}] HTML snippet: {snippet[:300]}')
     results=[]
     seen=set()
-    logged=0
+    logged=0; no_name=0
     for item in items:
         try:
-            ne=item.select_one('.caption h4 a,.product-name a,h4 a,h3 a,[class*="product-title"] a')
-            if not ne: continue
+            # Try multiple name selectors in order of specificity
+            ne = (item.select_one('.caption h4 a') or
+                  item.select_one('.product-name a') or
+                  item.select_one('h4 a') or
+                  item.select_one('h3 a') or
+                  item.select_one('h2 a') or
+                  item.select_one('[class*="product-title"] a') or
+                  item.select_one('[class*="name"] a') or
+                  item.select_one('a[href]'))  # last resort: any link
+            if not ne:
+                no_name+=1; continue
             name=ne.get_text(strip=True); link=ne.get('href','').strip()
+            if not name or len(name)<3: continue
             if not link.startswith('http'): link=base_url+link
             if link in seen: continue
             seen.add(link)
-            # Log first 3 names to debug validator rejections
-            if logged<3: log.info(f'[{label}] candidate: {name[:80]}'); logged+=1
+            if logged<5: log.info(f'[{label}] candidate: {name[:80]}'); logged+=1
             name=fix_arabic(name,link,validator)
             if not validator(name): continue
             pe=item.select_one('.price,[class*="price"]')
@@ -126,6 +141,7 @@ def opencart_parse(html, base_url, label, validator):
             avail='Out of Stock' if 'out of stock' in item.get_text().lower() else 'In Stock'
             results.append({'name':name,'price':price,'availability':avail,'url':link})
         except Exception as e: log.debug(f'[{label}] {e}')
+    if no_name>0: log.info(f'[{label}] {no_name} items had no name element')
     return results, seen
 
 def salla_parse(html, base_url, label, validator):
@@ -177,12 +193,26 @@ def parse_our_site(pt):
         soup=BeautifulSoup(html,'lxml'); items=soup.select('li.product-item,.product-item-info'); nf=0
         for item in items:
             try:
-                ne=item.select_one('.product-item-name a,.product-item-link'); pe=item.select_one('.price'); le=item.select_one('a.product-item-link,.product-item-name a')
-                if not ne or not pe: continue
-                name=ne.get_text(strip=True); price=pparse(pe.get_text(strip=True)); link=le['href'] if le and le.get('href') else ''
+                ne=item.select_one('.product-item-name a,.product-item-link')
+                le=item.select_one('a.product-item-link,.product-item-name a')
+                if not ne: continue
+                name=ne.get_text(strip=True)
+                link=le['href'] if le and le.get('href') else ''
                 if link in seen: continue
                 seen.add(link); name=fix_arabic(name,link,val)
                 if not val(name): continue
+                # Try multiple price selectors
+                price=None
+                for sel in ['.price-wrapper .price','.price','.special-price .price',
+                             '[data-price-type="finalPrice"] .price','[class*="price"]']:
+                    pe=item.select_one(sel)
+                    if pe:
+                        price=pparse(pe.get_text(strip=True))
+                        if price: break
+                # Log first product price attempt for debugging
+                if len(products)==0:
+                    pe_raw=item.select_one('.price')
+                    log.info(f'[Our Site] first price raw: {pe_raw.get_text(strip=True) if pe_raw else "NOT FOUND"}')
                 ae=item.select_one('.stock,.availability'); avail='Out of Stock' if ae and 'out' in ae.get_text().lower() else 'In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Our Site] {e}')
@@ -278,8 +308,12 @@ def parse_abdulwahed(pt):
         html=zenrows(url,wait=10000)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
+        # Try progressively broader selectors
         cards=soup.select('div[class*="grid-cols-2"] > div,div[class*="grid-cols-3"] > div,div[class*="grid-cols-4"] > div,div[class*="sm:grid-cols"] > div')
-        if not cards: cards=[d for d in soup.select('div') if d.select_one('img[alt]') and re.search(r'\d{3,}',d.get_text())]
+        if not cards:
+            # Fallback: any div containing an img with alt and a price number
+            cards=[d for d in soup.select('div') if d.select_one('img[alt]') and re.search(r'\d{3,}',d.get_text()) and d.select_one('a[href]')]
+        log.info(f'[Abdulwahed] found {len(cards)} cards page {page}')
         if not cards: log.warning(f'[Abdulwahed] No cards p{page}'); break
         nf=0
         for card in cards:
@@ -287,7 +321,10 @@ def parse_abdulwahed(pt):
                 ie=card.select_one('img[alt]')
                 if not ie: continue
                 name=ie.get('alt','').strip()
-                if not name or 'sony' not in norm(name): continue
+                if not name: continue
+                # Log first few to debug
+                if len(products)<3: log.info(f'[Abdulwahed] candidate: {name[:80]}')
+                if 'sony' not in norm(name): continue
                 le=card.select_one('a[href]')
                 if not le: continue
                 link=le.get('href','').strip()
@@ -302,6 +339,7 @@ def parse_abdulwahed(pt):
                 ct=card.get_text().lower(); avail='Out of Stock' if 'out of stock' in ct or 'notify' in ct else 'In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Abdulwahed] {e}')
+        log.info(f'[Abdulwahed] page {page} added {nf} products')
         if nf==0: break
         page+=1
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
@@ -313,27 +351,15 @@ def parse_amazon(pt):
     while page<=15:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Amazon SA] page {page}')
-        # Amazon needs autoparse mode, not js_render (which causes 422)
-        params={
-            'apikey': ZENROWS_KEY,
-            'url': url,
-            'antibot': 'true',
-            'premium_proxy': 'true',
-            'proxy_country': 'sa',
-            'autoparse': 'true',
-        }
-        try:
-            resp=requests.get('https://api.zenrows.com/v1/',params=params,timeout=60)
-            resp.raise_for_status()
-            html=resp.text
-        except Exception as e:
-            log.warning(f'[Amazon SA] request failed: {e}')
-            break
+        html=zenrows(url,wait=8000)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
         items=[i for i in soup.select('[data-component-type="s-search-result"],[data-asin]') if i.get('data-asin')]
         log.info(f'[Amazon SA] found {len(items)} items page {page}')
-        if not items: break
+        if not items:
+            body=soup.find('body'); snippet=str(body)[:400] if body else html[:400]
+            log.warning(f'[Amazon SA] HTML snippet: {snippet[:300]}')
+            break
         nf=0
         for item in items:
             try:
@@ -345,6 +371,7 @@ def parse_amazon(pt):
                 if m: link=f'https://www.amazon.sa/dp/{m.group(1)}'
                 if link in seen: continue
                 seen.add(link)
+                if nf<3: log.info(f'[Amazon SA] candidate: {name[:80]}')
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
@@ -487,17 +514,26 @@ def parse_camerabox(pt):
         seen=set()
         for item in items:
             try:
+                # Try title link first
                 te=item.select_one('h1.s-product-card-content-title a,h2.s-product-card-content-title a,.s-product-card-content-title a')
+                # Fallback: aria-label on the image anchor (contains full product name)
+                if not te: te=item.select_one('a[aria-label][href]')
                 if not te: te=item.select_one('a[href*="camerabox"]')
                 if not te: continue
-                name=te.get_text(strip=True); link=te.get('href','').strip()
+                # Prefer aria-label over text content (text may be a product ID)
+                name=te.get('aria-label','').strip() or te.get_text(strip=True)
+                link=te.get('href','').strip()
                 if not link.startswith('http'): link='https://camerabox.com.sa'+link
                 if link in seen: continue
                 seen.add(link)
-                if not name:
+                if not name or re.match(r'^P\d+$', name):
+                    # Name is a product ID — try img alt text
+                    img=item.select_one('img[alt]')
+                    if img: name=img.get('alt','').strip()
+                if not name or re.match(r'^P\d+$', name):
                     slug=link.rstrip('/').split('/')[-1].split('?')[0]; name=re.sub(r'[_-]',' ',slug).title()
                 name=fix_arabic(name,link,val)
-                if len(products)<3: log.info(f'[CameraBox] candidate: {name[:80]}')
+                if len(products)<5: log.info(f'[CameraBox] candidate: {name[:80]}')
                 if not val(name): continue
                 pe=item.select_one('.s-product-card-sale-price h4,.s-product-card-sale-price span')
                 price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
