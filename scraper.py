@@ -21,7 +21,7 @@ URLS = {
         'qomra':      'https://qomra.pro/en/search?q=le&filters[category_id]=750050316&filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
-        'amazon':     'https://www.amazon.sa/-/en/s?k=lens+sony&i=electronics&rh=n%3A16966385031%2Cp_n_condition-type%3A28071522031%2Cp_123%3A237204&dc&language=en',
+        'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE',
         'noon':       'https://www.noon.com/saudi-en/sony/?q=sony+camera+lenses',
         'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
@@ -34,7 +34,7 @@ URLS = {
         'qomra':      'https://qomra.pro/en/category/jKQvBD?filters[category_id]=1061595081&filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
-        'amazon':     'https://www.amazon.sa/s?k=camera+sony&rh=p_123%3A237204%2Cp_n_condition-type%3A28071522031&language=en',
+        'amazon':     'https://www.amazon.sa/s?k=sony+camera&i=electronics&language=en_AE',
         'noon':       'https://www.noon.com/saudi-en/sony/?q=sony+camera',
         'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
@@ -116,7 +116,7 @@ def opencart_parse(html, base_url, label, validator):
             if not link.startswith('http'): link=base_url+link
             if link in seen: continue
             seen.add(link)
-            if 'sony' not in norm(name): continue
+            # These pages are already brand-filtered — no need to check for 'sony' in name
             name=fix_arabic(name,link,validator)
             if not validator(name): continue
             pe=item.select_one('.price,[class*="price"]')
@@ -159,7 +159,8 @@ def salla_parse(html, base_url, label, validator):
             card=item.get_text()
             avail='Out of Stock' if 'out of stock' in card.lower() or 'نفد' in card else 'In Stock'
             results.append({'name':name,'price':price,'availability':avail,'url':link})
-        except Exception as e: log.debug(f'[{label}] {e}')
+        except Exception as e: log.debug(f'[{label}] item error: {e}')
+    log.info(f'[{label}] salla_parse returning {len(results)} valid items')
     return results, seen
 
 # ── Our Site ──────────────────────────────────────────────────────────────────
@@ -194,7 +195,14 @@ def parse_qomra(pt):
     while page<=20:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Qomra] page {page}')
-        html=zenrows(url,wait=12000)
+        html=zenrows(url,wait=15000)
+        # If no items found on first try, retry with longer wait
+        if html:
+            from bs4 import BeautifulSoup as BS
+            test=BS(html,'lxml')
+            if not test.select('custom-salla-product-card,s-product-card-entry'):
+                log.info(f'[Qomra] No items on first try, retrying with wait=20000')
+                html=zenrows(url,wait=20000)
         if not html: break
         r,s=salla_parse(html,'https://qomra.pro','Qomra',val)
         new=[p for p in r if p['url'] not in seen]
@@ -242,6 +250,8 @@ def parse_mestores(pt):
                 if not name:
                     slug=link.rstrip('/').split('/')[-1].split('?')[0]; name=re.sub(r'[_-]',' ',slug).title()
                 name=fix_arabic(name,link,val)
+                # Log first few to debug
+                if len(products)<3: log.info(f'[Me Stores] candidate: {name[:80]}')
                 if not val(name): continue
                 pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
                 price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
@@ -336,11 +346,15 @@ def parse_noon(pt):
     while page<=10:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Noon] page {page}')
-        html=zenrows(url,wait=12000)
+        html=zenrows(url,wait=15000)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
         items=soup.select('[data-qa="product-block"],article,[class*="productContainer"],[class*="sc-"][class*="product"]')
-        if not items: break
+        log.info(f'[Noon] found {len(items)} raw items page {page}')
+        if not items:
+            body=soup.find('body'); snippet=str(body)[:400] if body else html[:400]
+            log.warning(f'[Noon] HTML snippet: {snippet[:300]}')
+            break
         nf=0
         for item in items:
             try:
@@ -351,6 +365,8 @@ def parse_noon(pt):
                 if not link.startswith('http'): link='https://www.noon.com'+link
                 if link in seen: continue
                 seen.add(link)
+                # Log first few candidates
+                if len(products)<3: log.info(f'[Noon] candidate: {name[:80]}')
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
