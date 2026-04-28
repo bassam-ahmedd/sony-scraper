@@ -21,9 +21,9 @@ URLS = {
         'qomra':      'https://qomra.pro/en/category/sony-lenses?filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
-        'amazon':     'https://www.amazon.sa/s?srs=18096756031&rh=p_89%3ASony&language=en_AE&i=electronics',
+        'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
-        'cameramix':  'https://www.cameramix.com/index.php?route=product/search&search=sony&category_id=67&limit=100',
+        'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71772710825?fm=10',
         'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A7',
@@ -34,12 +34,12 @@ URLS = {
         'qomra':      'https://qomra.pro/en/category/jKQvBD?filters[category_id]=1061595081&filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
-        'amazon':     'https://www.amazon.sa/s?srs=18096756031&rh=p_89%3ASony&language=en_AE&i=electronics&k=camera',
+        'amazon':     'https://www.amazon.sa/s?k=sony+mirrorless+camera&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/digital-cameras-16168/?q=sony',
-        'cameramix':  'https://www.cameramix.com/index.php?route=product/search&search=sony&limit=100',
+        'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%AA%D8%B5%D9%88%D9%8A%D8%B11772717544?fm=10',
-        'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%B1%D9%82%D9%85%D9%8A%D8%A9',
+        'alamcam':    'https://alamcam.sa/all-products',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
 }
@@ -251,13 +251,23 @@ def parse_mestores(pt):
     while page<=20:
         url=base.format(page=page)
         log.info(f'[Me Stores] page {page}')
-        html=zenrows(url,wait=12000)
+        html=zenrows(url,wait=15000)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
         anchors=soup.select('a[href*="/en_sa/sony"]')
         if not anchors:
             g=soup.select_one('[class*="gallery-root"],[class*="infinite-scroll"]')
             if g: anchors=[a for a in g.select('a[href]') if '/en_sa/' in a.get('href','')]
+        # If still no anchors, retry with longer wait (JS might not have loaded)
+        if not anchors:
+            log.info(f'[Me Stores] retrying page {page} with wait=20000')
+            html=zenrows(url,wait=20000)
+            if html:
+                soup=BeautifulSoup(html,'lxml')
+                anchors=soup.select('a[href*="/en_sa/sony"]')
+                if not anchors:
+                    g=soup.select_one('[class*="gallery-root"],[class*="infinite-scroll"]')
+                    if g: anchors=[a for a in g.select('a[href]') if '/en_sa/' in a.get('href','')]
         log.info(f'[Me Stores] found {len(anchors)} anchors on page {page}')
         if not anchors:
             body=soup.find('body'); snippet=str(body)[:400] if body else html[:400]
@@ -431,7 +441,22 @@ def parse_noon(pt):
                 le=item.select_one('a[href*="/p/"]') or item.select_one('a[href]')
                 if not ne or not le: continue
                 name=ne.get_text(strip=True)
-                price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
+                # Price: try specific selectors first, then extract first valid number
+                price=None
+                for price_sel in ['[data-qa="price-amount"]','[class*="priceNow"]',
+                                   '[class*="selling-price"]','[class*="sellingPrice"]',
+                                   '[class*="price-now"]']:
+                    pe=item.select_one(price_sel)
+                    if pe:
+                        price=pparse(tr_east(pe.get_text(strip=True)))
+                        if price and price>100: break
+                # Fallback: find any span/div with a 3-4 digit number that looks like SAR price
+                if not price:
+                    for el in item.select('span,strong,div'):
+                        txt=tr_east(el.get_text(strip=True))
+                        if re.search(r'^\d{3,5}$',txt.replace(',','').strip()):
+                            p=pparse(txt)
+                            if p and 100<p<100000: price=p; break
                 link=le.get('href','')
                 if not link.startswith('http'): link='https://www.noon.com'+link
                 if link in seen: continue
@@ -453,23 +478,21 @@ def parse_cameramix(pt):
     base=URLS[pt]['cameramix']; val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set(); page=1
     while page<=20:
-        url=f"{base}&page={page}" if page>1 else base
+        url=f"{base}?page={page}" if page>1 else base
         log.info(f'[CameraMix] page {page}')
-        # Try plain_get first (faster), then ZenRows without js_render (like working Sigma script)
-        html=plain(url)
-        if not html:
-            params={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true','proxy_country':'sa'}
-            try:
-                resp=requests.get('https://api.zenrows.com/v1/',params=params,timeout=90)
-                if resp.status_code==200: html=resp.text
-            except Exception as e: log.warning(f'[CameraMix] {e}')
-        if not html: break
+        # ZenRows standard (no js_render) — same approach as working Amazon
+        params={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true','proxy_country':'sa'}
+        try:
+            resp=requests.get('https://api.zenrows.com/v1/',params=params,timeout=90)
+            html=resp.text if resp.status_code==200 else None
+            if not html: log.warning(f'[CameraMix] ZenRows {resp.status_code}'); break
+        except Exception as e:
+            log.warning(f'[CameraMix] {e}'); break
         r,s=opencart_parse(html,'https://www.cameramix.com','CameraMix',val)
-        # Deduplicate by URL
         new=[p for p in r if p['url'] not in seen]
         for p in new: seen.add(p['url'])
         products.extend(new)
-        # Check for next page using OpenCart pagination
+        # Check next page
         from bs4 import BeautifulSoup as BS
         soup=BS(html,'lxml')
         nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
@@ -719,11 +742,12 @@ def write_sheet(client,pt,rows):
     sh.batch_update({'requests':[{'updateSheetProperties':{'properties':{'sheetId':ws.id,'gridProperties':{'columnCount':70}},'fields':'gridProperties.columnCount'}}]})
     ws.clear()
     data=[GH,CH]+[row2list(r) for r in rows]
-    ws.update(values=data,range_name='A1',value_input_option='USER_ENTERED')
+    # Use RAW so URLs are stored as-is (Google Sheets auto-links http:// URLs)
+    ws.update(values=data,range_name='A1',value_input_option='RAW')
     color_cells(ws,rows,sh); log.info(f'Written {len(rows)} rows to [{tn}]')
     try: ws2=sh.worksheet(sn)
     except gspread.WorksheetNotFound: ws2=sh.add_worksheet(title=sn,rows=20,cols=10)
-    ws2.clear(); ws2.update(values=[SH]+summary(rows,ts),range_name='A1',value_input_option='USER_ENTERED')
+    ws2.clear(); ws2.update(values=[SH]+summary(rows,ts),range_name='A1',value_input_option='RAW')
     log.info(f'Written summary to [{sn}]')
 
 # ── Main ──────────────────────────────────────────────────────────────────────
