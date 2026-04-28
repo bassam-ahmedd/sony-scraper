@@ -18,7 +18,7 @@ SOURCES     = [OUR_SITE] + COMPETITORS
 URLS = {
     'lenses': {
         'our_site':   'https://ksa.amt.tv/camera-accessories/photography/lenses.html?product_brand=1',
-        'qomra':      'https://qomra.pro/en/search?q=le&filters[category_id]=750050316&filters[brand_id]=174800383',
+        'qomra':      'https://qomra.pro/en/category/sony-lenses?filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
         'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE',
@@ -108,6 +108,7 @@ def opencart_parse(html, base_url, label, validator):
         log.warning(f'[{label}] HTML snippet: {snippet[:300]}')
     results=[]
     seen=set()
+    logged=0
     for item in items:
         try:
             ne=item.select_one('.caption h4 a,.product-name a,h4 a,h3 a,[class*="product-title"] a')
@@ -116,7 +117,8 @@ def opencart_parse(html, base_url, label, validator):
             if not link.startswith('http'): link=base_url+link
             if link in seen: continue
             seen.add(link)
-            # These pages are already brand-filtered — no need to check for 'sony' in name
+            # Log first 3 names to debug validator rejections
+            if logged<3: log.info(f'[{label}] candidate: {name[:80]}'); logged+=1
             name=fix_arabic(name,link,validator)
             if not validator(name): continue
             pe=item.select_one('.price,[class*="price"]')
@@ -236,7 +238,7 @@ def parse_mestores(pt):
             try:
                 link=a.get('href','').strip()
                 if not link.startswith('http'): link='https://mestores.com'+link
-                if len([p for p in link.replace('https://mestores.com','').split('/') if p])<3: continue
+                if link in ('https://mestores.com','https://mestores.com/en_sa'): continue
                 if link in seen: continue
                 seen.add(link)
                 name=''; bl=0
@@ -311,10 +313,26 @@ def parse_amazon(pt):
     while page<=15:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Amazon SA] page {page}')
-        html=zenrows(url,wait=8000)
+        # Amazon needs autoparse mode, not js_render (which causes 422)
+        params={
+            'apikey': ZENROWS_KEY,
+            'url': url,
+            'antibot': 'true',
+            'premium_proxy': 'true',
+            'proxy_country': 'sa',
+            'autoparse': 'true',
+        }
+        try:
+            resp=requests.get('https://api.zenrows.com/v1/',params=params,timeout=60)
+            resp.raise_for_status()
+            html=resp.text
+        except Exception as e:
+            log.warning(f'[Amazon SA] request failed: {e}')
+            break
         if not html: break
         soup=BeautifulSoup(html,'lxml')
         items=[i for i in soup.select('[data-component-type="s-search-result"],[data-asin]') if i.get('data-asin')]
+        log.info(f'[Amazon SA] found {len(items)} items page {page}')
         if not items: break
         nf=0
         for item in items:
@@ -346,10 +364,17 @@ def parse_noon(pt):
     while page<=10:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Noon] page {page}')
-        html=zenrows(url,wait=15000)
+        # Noon is Next.js — needs scroll to trigger lazy loading
+        html=zenrows(url,wait=20000,scroll=True)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
-        items=soup.select('[data-qa="product-block"],article,[class*="productContainer"],[class*="sc-"][class*="product"]')
+        # Try broad selectors for Noon's React-rendered product grid
+        items=soup.select('[data-qa="product-block"],article')
+        if not items:
+            items=soup.select('div[class*="product"]')
+        if not items:
+            # Try any div with a link and a price-like element
+            items=[d for d in soup.select('div') if d.select_one('a[href*="/saudi-en/"]') and re.search(r'\d{3,}',d.get_text())]
         log.info(f'[Noon] found {len(items)} raw items page {page}')
         if not items:
             body=soup.find('body'); snippet=str(body)[:400] if body else html[:400]
@@ -358,14 +383,14 @@ def parse_noon(pt):
         nf=0
         for item in items:
             try:
-                ne=item.select_one('[class*="name"],[class*="title"],h2,h3,[data-qa="product-name"]')
-                le=item.select_one('a[href]')
+                ne=item.select_one('[class*="name"],[class*="title"],[class*="product-title"],h2,h3,p')
+                le=item.select_one('a[href*="/saudi-en/"]')
+                if not le: le=item.select_one('a[href]')
                 if not ne or not le: continue
                 name=ne.get_text(strip=True); link=le.get('href','').strip()
                 if not link.startswith('http'): link='https://www.noon.com'+link
                 if link in seen: continue
                 seen.add(link)
-                # Log first few candidates
                 if len(products)<3: log.info(f'[Noon] candidate: {name[:80]}')
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
@@ -454,10 +479,36 @@ def parse_camerabox(pt):
     log.info(f'[CameraBox] fetching with scroll')
     products=[]
     try:
-        html=zenrows(url,wait=5000,scroll=True)
+        html=zenrows(url,wait=8000,scroll=True)
         if not html: return products
-        r,s=salla_parse(html,'https://camerabox.com.sa','CameraBox',val)
-        products.extend(r)
+        soup=BeautifulSoup(html,'lxml')
+        items=soup.select('custom-salla-product-card,s-product-card-entry,[class~="s-product-card-entry"]')
+        log.info(f'[CameraBox] found {len(items)} raw items')
+        seen=set()
+        for item in items:
+            try:
+                te=item.select_one('h1.s-product-card-content-title a,h2.s-product-card-content-title a,.s-product-card-content-title a')
+                if not te: te=item.select_one('a[href*="camerabox"]')
+                if not te: continue
+                name=te.get_text(strip=True); link=te.get('href','').strip()
+                if not link.startswith('http'): link='https://camerabox.com.sa'+link
+                if link in seen: continue
+                seen.add(link)
+                if not name:
+                    slug=link.rstrip('/').split('/')[-1].split('?')[0]; name=re.sub(r'[_-]',' ',slug).title()
+                name=fix_arabic(name,link,val)
+                if len(products)<3: log.info(f'[CameraBox] candidate: {name[:80]}')
+                if not val(name): continue
+                pe=item.select_one('.s-product-card-sale-price h4,.s-product-card-sale-price span')
+                price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
+                if not price:
+                    for el in item.select('h4,[class*="price"]'):
+                        p=pparse(tr_east(el.get_text(strip=True)))
+                        if p and p>100: price=p; break
+                card=item.get_text()
+                avail='Out of Stock' if 'out of stock' in card.lower() or 'نفد' in card else 'In Stock'
+                products.append({'name':name,'price':price,'availability':avail,'url':link})
+            except Exception as e: log.debug(f'[CameraBox] {e}')
     except Exception as e: log.error(f'[CameraBox] {e}')
     log.info(f'[CameraBox] {pt}: {len(products)}'); return products
 
