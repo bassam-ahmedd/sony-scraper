@@ -21,12 +21,12 @@ URLS = {
         'qomra':      'https://qomra.pro/en/category/sony-lenses?filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
-        'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE',
-        'noon':       'https://www.noon.com/saudi-en/sony/?q=sony+camera+lenses',
+        'amazon':     'https://www.amazon.sa/s?rh=p_89%3ASony&i=electronics&language=en_AE&k=sony+lens',
+        'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
         'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71772710825?fm=10',
-        'alamcam':    'https://alamcam.sa/all-products?fc=66&fm=18',
+        'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A7',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
     'cameras': {
@@ -34,12 +34,12 @@ URLS = {
         'qomra':      'https://qomra.pro/en/category/jKQvBD?filters[category_id]=1061595081&filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
-        'amazon':     'https://www.amazon.sa/s?k=sony+camera&i=electronics&language=en_AE',
-        'noon':       'https://www.noon.com/saudi-en/sony/?q=sony+camera',
+        'amazon':     'https://www.amazon.sa/s?rh=p_89%3ASony&i=electronics&language=en_AE&k=sony+camera',
+        'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/digital-cameras-16168/?q=sony',
         'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%AA%D8%B5%D9%88%D9%8A%D8%B11772717544?fm=10',
-        'alamcam':    'https://alamcam.sa/all-products',
+        'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
 }
@@ -201,10 +201,10 @@ def parse_our_site(pt):
                 if link in seen: continue
                 seen.add(link); name=fix_arabic(name,link,val)
                 if not val(name): continue
-                # Try multiple price selectors
+                # Try multiple price selectors (from working Sigma scraper)
                 price=None
-                for sel in ['.price-wrapper .price','.price','.special-price .price',
-                             '[data-price-type="finalPrice"] .price','[class*="price"]']:
+                for sel in ['[data-price-type="finalPrice"] .price',
+                             '.special-price .price','.price-box .price','.price']:
                     pe=item.select_one(sel)
                     if pe:
                         price=pparse(pe.get_text(strip=True))
@@ -301,36 +301,37 @@ def parse_mestores(pt):
 # ── Abdulwahed ────────────────────────────────────────────────────────────────
 def parse_abdulwahed(pt):
     base=URLS[pt]['abdulwahed']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen=set(); page=1
+    products=[]; seen_urls=set(); seen_page_hashes=set(); page=1
     while page<=20:
         url=f"{base}?page={page}" if page>1 else base
         log.info(f'[Abdulwahed] page {page}')
         html=zenrows(url,wait=10000)
         if not html: break
+        # Detect repeated pages (infinite scroll returns same content)
+        page_hash=hash(html[:2000])
+        if page_hash in seen_page_hashes:
+            log.info(f'[Abdulwahed] Repeated page detected at page {page}, stopping')
+            break
+        seen_page_hashes.add(page_hash)
         soup=BeautifulSoup(html,'lxml')
-        # Try progressively broader selectors
         cards=soup.select('div[class*="grid-cols-2"] > div,div[class*="grid-cols-3"] > div,div[class*="grid-cols-4"] > div,div[class*="sm:grid-cols"] > div')
         if not cards:
-            # Fallback: any div containing an img with alt and a price number
             cards=[d for d in soup.select('div') if d.select_one('img[alt]') and re.search(r'\d{3,}',d.get_text()) and d.select_one('a[href]')]
         log.info(f'[Abdulwahed] found {len(cards)} cards page {page}')
-        if not cards: log.warning(f'[Abdulwahed] No cards p{page}'); break
+        if not cards: break
         nf=0
         for card in cards:
             try:
                 ie=card.select_one('img[alt]')
                 if not ie: continue
                 name=ie.get('alt','').strip()
-                if not name: continue
-                # Log first few to debug
-                if len(products)<3: log.info(f'[Abdulwahed] candidate: {name[:80]}')
-                if 'sony' not in norm(name): continue
+                if not name or 'sony' not in norm(name): continue
                 le=card.select_one('a[href]')
                 if not le: continue
                 link=le.get('href','').strip()
                 if not link.startswith('http'): link='https://www.abdulwahed.com'+link
-                if link in seen: continue
-                seen.add(link); name=fix_arabic(name,link,val)
+                if link in seen_urls: continue
+                seen_urls.add(link); name=fix_arabic(name,link,val)
                 if not val(name): continue
                 price=None
                 for el in card.select('span,div,p'):
@@ -339,8 +340,7 @@ def parse_abdulwahed(pt):
                 ct=card.get_text().lower(); avail='Out of Stock' if 'out of stock' in ct or 'notify' in ct else 'In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Abdulwahed] {e}')
-        log.info(f'[Abdulwahed] page {page} added {nf} products (Sony)')
-        # Don't stop on nf==0 — page may have other brands. Stop only if no cards at all.
+        log.info(f'[Abdulwahed] page {page} added {nf} Sony products')
         page+=1
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
@@ -351,38 +351,52 @@ def parse_amazon(pt):
     while page<=15:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Amazon SA] page {page}')
-        html=zenrows(url,wait=8000)
-        if not html: break
+        # Standard ZenRows WITHOUT js_render (same as working Sigma scraper)
+        params={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true','proxy_country':'sa'}
+        try:
+            resp=requests.get('https://api.zenrows.com/v1/',params=params,timeout=90)
+            resp.raise_for_status(); html=resp.text
+        except Exception as e:
+            log.warning(f'[Amazon SA] failed: {e}'); break
         soup=BeautifulSoup(html,'lxml')
-        items=[i for i in soup.select('[data-component-type="s-search-result"],[data-asin]') if i.get('data-asin')]
+        items=[i for i in soup.select('[data-component-type="s-search-result"]') if i.get('data-asin')]
         log.info(f'[Amazon SA] found {len(items)} items page {page}')
         if not items:
-            body=soup.find('body'); snippet=str(body)[:400] if body else html[:400]
-            log.warning(f'[Amazon SA] HTML snippet: {snippet[:300]}')
+            body=soup.find('body'); log.warning(f'[Amazon SA] snippet: {str(body)[:300] if body else html[:300]}')
             break
-        nf=0; logged=0
+        nf=0
         for item in items:
             try:
-                ne=item.select_one('h2 a span,h2 span'); le=item.select_one('h2 a[href]')
-                if not ne or not le: continue
-                name=ne.get_text(strip=True); link=le.get('href','').strip()
-                if not link.startswith('http'): link='https://www.amazon.sa'+link
-                m=re.search(r'/dp/([A-Z0-9]{10})',link)
-                if m: link=f'https://www.amazon.sa/dp/{m.group(1)}'
+                ne=(item.select_one('h2 a span') or
+                    item.select_one('.a-size-medium.a-color-base.a-text-normal') or
+                    item.select_one('h2 span'))
+                if not ne: continue
+                name=ne.get_text(strip=True)
+                # Price from price-whole + fraction (working Sigma approach)
+                pw=item.select_one('.a-price-whole'); pf=item.select_one('.a-price-fraction')
+                price=None
+                if pw:
+                    ps=pw.get_text(strip=True).replace(',','').replace('.','')
+                    ps+='.'+pf.get_text(strip=True) if pf else '.00'
+                    try: price=float(ps)
+                    except: pass
+                avail='In Stock' if price else 'Out of Stock'
+                le=item.select_one('h2 a'); href=le.get('href','') if le else ''
+                if '/dp/' in href:
+                    asin=href.split('/dp/')[1].split('/')[0]; link=f'https://www.amazon.sa/dp/{asin}'
+                else:
+                    asin=item.get('data-asin',''); link=f'https://www.amazon.sa/dp/{asin}' if asin else ''
                 if link in seen: continue
                 seen.add(link)
-                if logged<5: log.info(f'[Amazon SA] candidate: {name[:80]}'); logged+=1
+                if page==1 and nf<5: log.info(f'[Amazon SA] candidate: {name[:80]}')
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
-                pe=item.select_one('.a-price .a-offscreen,.a-price-whole')
-                price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
-                ae=item.select_one('.a-color-price'); avail='Out of Stock' if ae and 'currently unavailable' in ae.get_text().lower() else 'In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Amazon SA] {e}')
-        if nf==0 and logged==0: break  # truly empty page
-        if nf==0: break  # sony filter removed all items on this page — stop
-        page+=1
+        nxt=soup.select_one('.s-pagination-next:not(.s-pagination-disabled)')
+        if not nxt: break
+        page+=1; time.sleep(2)
     log.info(f'[Amazon SA] {pt}: {len(products)}'); return products
 
 # ── Noon ──────────────────────────────────────────────────────────────────────
@@ -390,46 +404,51 @@ def parse_noon(pt):
     base=URLS[pt]['noon']; val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set(); page=1
     while page<=10:
-        url=f"{base}&page={page}" if page>1 else base
+        url=f"{base}?page={page}" if page>1 else base
         log.info(f'[Noon] page {page}')
-        # Noon is Next.js — needs scroll to trigger lazy loading
-        html=zenrows(url,wait=20000,scroll=True)
+        html=zenrows(url,wait=10000)  # js_render=True, wait=10000 (working Sigma approach)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
-        # Try broad selectors for Noon's React-rendered product grid
-        items=soup.select('[data-qa="product-block"],article')
+        items=(soup.select('[data-qa="product-block"]') or
+               soup.select('[class*="ProductBlock"]') or
+               soup.select('[class*="product-block"]') or
+               soup.select('[class*="productContainer"]') or
+               [a.find_parent('div') for a in soup.select('a[href*="/p/"]') if a.find_parent('div')])
+        seen_ids=set(); unique=[]
+        for it in items:
+            if id(it) not in seen_ids: seen_ids.add(id(it)); unique.append(it)
+        items=unique
+        log.info(f'[Noon] found {len(items)} items page {page}')
         if not items:
-            items=soup.select('div[class*="product"]')
-        if not items:
-            # Try any div with a link and a price-like element
-            items=[d for d in soup.select('div') if d.select_one('a[href*="/saudi-en/"]') and re.search(r'\d{3,}',d.get_text())]
-        log.info(f'[Noon] found {len(items)} raw items page {page}')
-        if not items:
-            body=soup.find('body'); snippet=str(body)[:400] if body else html[:400]
-            log.warning(f'[Noon] HTML snippet: {snippet[:300]}')
+            body=soup.find('body'); log.warning(f'[Noon] snippet: {str(body)[:300] if body else html[:300]}')
             break
         nf=0
         for item in items:
             try:
-                ne=item.select_one('[class*="name"],[class*="title"],[class*="product-title"],h2,h3,p')
-                le=item.select_one('a[href*="/saudi-en/"]')
-                if not le: le=item.select_one('a[href]')
+                ne=(item.select_one('[data-qa="product-name"]') or item.select_one('[class*="productTitle"]') or
+                    item.select_one('[class*="product-title"]') or item.select_one('[class*="name"]') or
+                    item.select_one('h3') or item.select_one('h2'))
+                pe=(item.select_one('[data-qa="price-amount"]') or item.select_one('[class*="priceNow"]') or
+                    item.select_one('[class*="selling-price"]') or item.select_one('[class*="Price"]') or
+                    item.select_one('[class*="price"]'))
+                le=item.select_one('a[href*="/p/"]') or item.select_one('a[href]')
                 if not ne or not le: continue
-                name=ne.get_text(strip=True); link=le.get('href','').strip()
+                name=ne.get_text(strip=True)
+                price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
+                link=le.get('href','')
                 if not link.startswith('http'): link='https://www.noon.com'+link
                 if link in seen: continue
                 seen.add(link)
-                if len(products)<3: log.info(f'[Noon] candidate: {name[:80]}')
+                if nf<3: log.info(f'[Noon] candidate: {name[:80]}')
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
-                pe=item.select_one('[class*="price"],[data-qa="price"]')
-                price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
                 ct=item.get_text().lower(); avail='Out of Stock' if 'out of stock' in ct or 'sold out' in ct else 'In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Noon] {e}')
-        if nf==0: break
-        page+=1
+        nxt=soup.select_one('[aria-label="Next"],[class*="nextPage"],[class*="next-page"]')
+        if not nxt or nf==0: break
+        page+=1; time.sleep(2)
     log.info(f'[Noon] {pt}: {len(products)}'); return products
 
 # ── CameraMix ─────────────────────────────────────────────────────────────────
@@ -494,32 +513,46 @@ def parse_alamcam(pt):
         html=plain(url) or zenrows(url,wait=8000)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
-        items=soup.select('.product-thumb,.product-layout,[class*="product-item"]')
-        if not items: break
+        items=(soup.select('.product-layout,.product-thumb') or
+               soup.select('.product-item') or
+               soup.select('[class*="product-card"]'))
+        items=[i for i in items if i.select_one('a[href]')]
+        log.info(f'[AlamCam] found {len(items)} items page {page}')
+        if not items:
+            body=soup.find('body'); log.warning(f'[AlamCam] snippet: {str(body)[:300] if body else ""}')
+            break
+        # Deduplicate by URL
+        seen_u=set(); deduped=[]
+        for item in items:
+            a=item.select_one('a[href*="alamcam"]') or item.select_one('a[href^="/"]')
+            href=a.get('href','') if a else ''
+            if href and href not in seen_u: seen_u.add(href); deduped.append(item)
+        items=deduped if deduped else items
         nf=0; logged=0
         for item in items:
             try:
-                ne=(item.select_one('.caption h4 a') or item.select_one('.product-name a') or
-                    item.select_one('h4 a') or item.select_one('h3 a') or item.select_one('a[href]'))
+                ne=(item.select_one('.caption h4 a') or item.select_one('h4 a') or
+                    item.select_one('h3 a') or item.select_one('.name a') or item.select_one('a'))
                 if not ne: continue
-                name=ne.get_text(strip=True); link=ne.get('href','').strip()
-                if not name or len(name)<3: continue
+                name=ne.get_text(strip=True)
+                link=ne.get('href','') if ne.name=='a' else (item.select_one('a[href]') or {}).get('href','')
+                if not link: continue
                 if not link.startswith('http'): link='https://alamcam.sa'+link
                 if link in seen: continue
                 seen.add(link)
                 if logged<3: log.info(f'[AlamCam] candidate: {name[:80]}'); logged+=1
-                # Must be Sony product
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
-                pe=item.select_one('.price,[class*="price"]')
+                pe=item.select_one('.price-new,.price-normal,.price')
                 price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
-                avail='Out of Stock' if 'out of stock' in item.get_text().lower() else 'In Stock'
+                avail='Out of Stock' if any(x in item.get_text().lower() for x in ['out of stock','unavailable','sold out']) else 'In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[AlamCam] {e}')
         log.info(f'[AlamCam] page {page}: {nf} Sony products')
-        if not items: break
-        page+=1
+        nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"],.next a')
+        if not nxt: break
+        page+=1; time.sleep(1.5)
     log.info(f'[AlamCam] {pt}: {len(products)}'); return products
     log.info(f'[AlamCam] {pt}: {len(products)}'); return products
 
