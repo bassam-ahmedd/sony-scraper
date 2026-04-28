@@ -21,9 +21,9 @@ URLS = {
         'qomra':      'https://qomra.pro/en/category/sony-lenses?filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
-        'amazon':     'https://www.amazon.sa/s?rh=p_89%3ASony&i=electronics&language=en_AE&k=sony+lens',
+        'amazon':     'https://www.amazon.sa/s?srs=18096756031&rh=p_89%3ASony&language=en_AE&i=electronics',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
-        'cameramix':  'https://www.cameramix.com/Sony',
+        'cameramix':  'https://www.cameramix.com/index.php?route=product/search&search=sony&category_id=67&limit=100',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71772710825?fm=10',
         'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A7',
@@ -34,12 +34,12 @@ URLS = {
         'qomra':      'https://qomra.pro/en/category/jKQvBD?filters[category_id]=1061595081&filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
-        'amazon':     'https://www.amazon.sa/s?rh=p_89%3ASony&i=electronics&language=en_AE&k=sony+camera',
+        'amazon':     'https://www.amazon.sa/s?srs=18096756031&rh=p_89%3ASony&language=en_AE&i=electronics&k=camera',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/digital-cameras-16168/?q=sony',
-        'cameramix':  'https://www.cameramix.com/Sony',
+        'cameramix':  'https://www.cameramix.com/index.php?route=product/search&search=sony&limit=100',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%AA%D8%B5%D9%88%D9%8A%D8%B11772717544?fm=10',
-        'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA',
+        'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%B1%D9%82%D9%85%D9%8A%D8%A9',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
 }
@@ -301,18 +301,12 @@ def parse_mestores(pt):
 # ── Abdulwahed ────────────────────────────────────────────────────────────────
 def parse_abdulwahed(pt):
     base=URLS[pt]['abdulwahed']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen_urls=set(); seen_page_hashes=set(); page=1
+    products=[]; seen_urls=set(); page=1; consecutive_empty=0
     while page<=20:
         url=f"{base}?page={page}" if page>1 else base
         log.info(f'[Abdulwahed] page {page}')
         html=zenrows(url,wait=10000)
         if not html: break
-        # Detect repeated pages (infinite scroll returns same content)
-        page_hash=hash(html[:2000])
-        if page_hash in seen_page_hashes:
-            log.info(f'[Abdulwahed] Repeated page detected at page {page}, stopping')
-            break
-        seen_page_hashes.add(page_hash)
         soup=BeautifulSoup(html,'lxml')
         cards=soup.select('div[class*="grid-cols-2"] > div,div[class*="grid-cols-3"] > div,div[class*="grid-cols-4"] > div,div[class*="sm:grid-cols"] > div')
         if not cards:
@@ -341,6 +335,10 @@ def parse_abdulwahed(pt):
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Abdulwahed] {e}')
         log.info(f'[Abdulwahed] page {page} added {nf} Sony products')
+        if nf==0: consecutive_empty+=1
+        else: consecutive_empty=0
+        # Stop after 3 consecutive pages with no Sony products (site has all brands mixed)
+        if consecutive_empty>=3: break
         page+=1
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
@@ -367,12 +365,11 @@ def parse_amazon(pt):
         nf=0
         for item in items:
             try:
-                ne=(item.select_one('h2 a span') or
-                    item.select_one('.a-size-medium.a-color-base.a-text-normal') or
-                    item.select_one('h2 span'))
-                if not ne: continue
-                name=ne.get_text(strip=True)
-                # Price from price-whole + fraction (working Sigma approach)
+                # Get the full product title from h2 (not just a sub-span)
+                h2=item.select_one('h2')
+                if not h2: continue
+                name=h2.get_text(strip=True)  # full title including all spans
+                if not name or len(name)<5: continue
                 pw=item.select_one('.a-price-whole'); pf=item.select_one('.a-price-fraction')
                 price=None
                 if pw:
@@ -456,16 +453,28 @@ def parse_cameramix(pt):
     base=URLS[pt]['cameramix']; val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set(); page=1
     while page<=20:
-        url=f"{base}?page={page}" if page>1 else base
+        url=f"{base}&page={page}" if page>1 else base
         log.info(f'[CameraMix] page {page}')
-        html=plain(url) or zenrows(url,wait=8000)
+        # Try plain_get first (faster), then ZenRows without js_render (like working Sigma script)
+        html=plain(url)
+        if not html:
+            params={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true','proxy_country':'sa'}
+            try:
+                resp=requests.get('https://api.zenrows.com/v1/',params=params,timeout=90)
+                if resp.status_code==200: html=resp.text
+            except Exception as e: log.warning(f'[CameraMix] {e}')
         if not html: break
         r,s=opencart_parse(html,'https://www.cameramix.com','CameraMix',val)
+        # Deduplicate by URL
         new=[p for p in r if p['url'] not in seen]
         for p in new: seen.add(p['url'])
         products.extend(new)
-        if not new: break
-        page+=1
+        # Check for next page using OpenCart pagination
+        from bs4 import BeautifulSoup as BS
+        soup=BS(html,'lxml')
+        nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
+        if not nxt or not new: break
+        page+=1; time.sleep(1.5)
     log.info(f'[CameraMix] {pt}: {len(products)}'); return products
 
 # ── PClub ─────────────────────────────────────────────────────────────────────
