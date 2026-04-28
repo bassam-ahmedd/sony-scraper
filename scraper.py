@@ -39,7 +39,7 @@ URLS = {
         'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%AA%D8%B5%D9%88%D9%8A%D8%B11772717544?fm=10',
-        'alamcam':    'https://alamcam.sa/all-products',
+        'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+camera&limit=100',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
 }
@@ -64,7 +64,7 @@ CAM_KW   = ['alpha','a7','a9','a6','a1 ','zv-','fx3','fx6','fx30','ilce','ilc-',
              'camera body','interchangeable']
 LENS_SIG = ['mm f/','mm f1','mm f2','mm f4','mm f5','mm f6','g master','zeiss',
             'sel1','sel2','sel3','sel4','sel5','zoom lens','prime lens','macro lens',
-            'fisheye lens']
+            'fisheye lens',' lens ',' lenses']
 
 def norm(s): return s.lower().strip()
 
@@ -424,10 +424,12 @@ def parse_amazon(pt):
                     link=f'https://www.amazon.sa/dp/{asin}' if asin else ''
                 if not link or link in seen: continue
                 seen.add(link)
-                if page==1 and nf<3: log.info(f'[Amazon SA] candidate: {name[:80]}')
+                if page==1 and len(seen)<=5: log.info(f'[Amazon SA] candidate: {name[:80]}')
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
-                if not val(name): continue
+                if not val(name):
+                    if page==1: log.info(f'[Amazon SA] REJECTED by validator: {name[:80]}')
+                    continue
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Amazon SA] {e}')
         # Check for next page
