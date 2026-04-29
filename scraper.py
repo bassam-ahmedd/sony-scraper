@@ -45,27 +45,51 @@ URLS = {
 }
 
 # ── Validators ────────────────────────────────────────────────────────────────
-NON_LENS = ['lens cap','lens hood','uv filter','cpl filter','nd filter','cleaning kit',
-            'tripod','flash','battery','charger','bag','strap','memory card','sd card',
-            'cable','adapter ring','camera body','bundle','cine lens','cinema lens',
-            'body only','camcorder','action cam','usb dock','dock','remote','grip',
-            'screen protector','carrying case','microphone','condenser']
-LENS_KW  = ['mm','f/','f1.','f2.','f4','f5.','f6.','g master','g lens','zeiss',
-             'fe ','e-mount','e mount','sel','macro','fisheye','zoom lens','prime lens',
-             'gm lens','telephoto','wide angle']
-NON_CAM  = ['tripod','bag','strap','battery','charger','memory card','sd card','flash',
-            'filter','cleaning','lens cap','hood','g master','gm lens',
-            'macro lens','fisheye','usb dock','dock','remote','grip',
-            'screen protector','carrying case','microphone','condenser','cage kit',
-            'shooting grip','smallrig']
-CAM_KW   = ['alpha','a7','a9','a6','a1 ','zv-','fx3','fx6','fx30','ilce','ilc-',
-             'dsc-','cyber-shot','mirrorless','digital camera','full frame','aps-c',
-             'a7r','a7s','a7c','a5100','a6000','a6100','a6400','a6600','a6700',
-             'camera body','interchangeable']
-LENS_SIG = ['mm f/','mm f1','mm f2','mm f4','mm f5','mm f6','g master','zeiss',
-            'sel1','sel2','sel3','sel4','sel5',
-            'zoom lens','prime lens','macro lens','fisheye lens',
-            'e-mount lens','fe lens','g lens','gm lens']
+NON_LENS = [
+    'lens cap','lens cover','front cap','rear cap','body cap',
+    'lens hood','sun shade',
+    'uv filter','cpl filter','nd filter','variable nd',
+    'cleaning kit','cleaning cloth','cleaning pen',
+    'tripod','monopod','ballhead','flash','speedlight',
+    'battery','charger','memory card','sd card','cf card','cfexpress',
+    'bag','case','pouch','strap','shoulder strap',
+    'cable','usb dock','dock','software','book','manual',
+    'mount adapter','lens adapter','converter',
+    'cage','shooting grip','microphone','condenser',
+    'screen protector','carrying case','light stand',
+]
+NON_CAM  = [
+    'tripod','bag','strap','battery','charger','memory card','sd card',
+    'cf card','cfexpress','flash','filter','cleaning','lens cap','lens hood',
+    'usb dock','dock','screen protector','carrying case',
+    'condenser','cage kit','cage for','shooting grip','smallrig','tilta',
+    'monitor','hdmi','softbox','diffuser','light stand',
+]
+CAM_MODELS_RE = [
+    r'\ba7\s*(r|s|c)?\s*(ii+|iv|v|[2-9])?\b',
+    r'\ba9\s*(ii+|[23])?\b',
+    r'\ba1\b',
+    r'\ba6[0-9]{3}[a-z]?\b',
+    r'\ba5[0-9]{3}\b',
+    r'\bzv-[a-z0-9]+',
+    r'\bfx[23679][a0]?\b',
+    r'\bilce-[\w-]+',
+    r'\bilme-[\w-]+',
+    r'\bdsc-[\w-]+',
+    r'\brx[0-9]',
+]
+CAM_TYPES = [
+    'mirrorless camera','digital camera','cinema camera','cinema line camera',
+    'vlog camera','camera body','interchangeable lens camera',
+    'interchangeable-lens camera','full-frame camera','aps-c camera',
+    'full frame mirrorless','alpha mirrorless',
+]
+LENS_ONLY_STRICT = [
+    'e-mount lens','fe lens','gm lens','g master lens',
+    'macro lens','fisheye lens',
+    'sel11f','sel14f','sel16f','sel20f','sel24f','sel28f','sel35f',
+    'sel50f','sel55f','sel70f','sel85f','sel90f','sel100f','sel135f',
+]
 
 def norm(s): return s.lower().strip()
 
@@ -76,13 +100,35 @@ def tr_east(s):
 def is_lens(name):
     n=norm(name)
     if any(k in n for k in NON_LENS): return False
-    return bool(re.search(r'\d+\s*mm',n)) or bool(re.search(r'\d{2,3}[-/]\d',n)) or any(k in n for k in LENS_KW)
+    # Reject camera bodies (kit names)
+    if re.search(r'\b(mirrorless camera|digital camera|cinema camera|vlog camera|camera body|camera kit)\b',n): return False
+    # Must have focal length
+    has_focal=bool(re.search(r'\d+\s*mm',n)) or bool(re.search(r'\d{2,3}[-–]\d{2,3}',n))
+    if not has_focal: return False
+    # Must have aperture OR explicit lens line
+    has_aperture=bool(re.search(r'\bf[\s/]?\d+\.?\d*',n))
+    LENS_LINES=['g master','gm ','g lens','zeiss','dg','dc','dn','hsm','oss',
+                'fe ','e pz','e-mount','a-mount',' lens',' lenses',
+                'macro','fisheye','telephoto','wide angle','zoom','prime']
+    has_line=any(k in n for k in LENS_LINES)
+    return has_aperture or has_line
 
 def is_camera(name):
     n=norm(name)
-    if any(s in n for s in LENS_SIG): return False
     if any(k in n for k in NON_CAM): return False
-    return any(k in n for k in CAM_KW)
+    # Check for strong camera type keywords first (overrides lens signals)
+    has_type=any(k in n for k in CAM_TYPES)
+    has_model=any(re.search(p,n) for p in CAM_MODELS_RE)
+    # Only if it's definitely a camera do we skip lens-only check
+    if has_type or has_model:
+        # Still exclude pure lens products that also happen to match
+        if any(s in n for s in LENS_ONLY_STRICT): return False
+        return True
+    # For weaker matches (just "alpha" etc), also check not a lens
+    has_alpha='alpha' in n
+    if has_alpha and not any(k in n for k in ['mm f/','mm f1','mm f2','mm f4',' lens ']):
+        return True
+    return False
 
 def fix_arabic(name,url,val):
     if any('\u0600'<=c<='\u06FF' for c in name):
