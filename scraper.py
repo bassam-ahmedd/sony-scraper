@@ -54,8 +54,8 @@ LENS_KW  = ['mm','f/','f1.','f2.','f4','f5.','f6.','g master','g lens','zeiss',
              'fe ','e-mount','e mount','sel','macro','fisheye','zoom lens','prime lens',
              'gm lens','telephoto','wide angle']
 NON_CAM  = ['tripod','bag','strap','battery','charger','memory card','sd card','flash',
-            'filter','cleaning','lens cap','hood','g master','gm lens','zoom lens',
-            'prime lens','macro lens','fisheye','usb dock','dock','remote','grip',
+            'filter','cleaning','lens cap','hood','g master','gm lens',
+            'macro lens','fisheye','usb dock','dock','remote','grip',
             'screen protector','carrying case','microphone','condenser','cage kit',
             'shooting grip','smallrig']
 CAM_KW   = ['alpha','a7','a9','a6','a1 ','zv-','fx3','fx6','fx30','ilce','ilc-',
@@ -63,8 +63,9 @@ CAM_KW   = ['alpha','a7','a9','a6','a1 ','zv-','fx3','fx6','fx30','ilce','ilc-',
              'a7r','a7s','a7c','a5100','a6000','a6100','a6400','a6600','a6700',
              'camera body','interchangeable']
 LENS_SIG = ['mm f/','mm f1','mm f2','mm f4','mm f5','mm f6','g master','zeiss',
-            'sel1','sel2','sel3','sel4','sel5','zoom lens','prime lens','macro lens',
-            'fisheye lens',' lens ',' lenses']
+            'sel1','sel2','sel3','sel4','sel5',
+            'zoom lens','prime lens','macro lens','fisheye lens',
+            'e-mount lens','fe lens','g lens','gm lens']
 
 def norm(s): return s.lower().strip()
 
@@ -434,12 +435,14 @@ def parse_amazon(pt):
                 if not link or link in seen: continue
                 seen.add(link)
                 if page==1 and len(seen)<=5: log.info(f'[Amazon SA] candidate: {name[:80]}')
-                if 'sony' not in norm(name): continue
+                # Amazon SA brand-filtered URL — don't require 'sony' in name
+                # (products are listed without brand prefix e.g. "Alpha 7 IV" not "Sony Alpha 7 IV")
                 name=fix_arabic(name,link,val)
                 if not val(name):
                     if page==1: log.info(f'[Amazon SA] REJECTED: {name[:80]}')
                     continue
-                products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
+                products.append({'name':'Sony '+name if not name.lower().startswith('sony') else name,
+                                  'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Amazon SA] {e}')
         # Check for next page
         nxt=soup.select_one('.s-pagination-next:not(.s-pagination-disabled)')
@@ -652,9 +655,26 @@ def lens_score(a,b):
 
 def cam_score(a,b):
     na,nb=norm(a),norm(b)
-    ma=set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-[\w-]+|dsc-[\w-]+',na))
-    mb=set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-[\w-]+|dsc-[\w-]+',nb))
+    # Normalize model variants before extracting:
+    # a7cm2 → a7c, a7riii → a7r, a7siii → a7s (strip generation suffixes)
+    # Also handle "alpha 7" → "a7", "alpha 6400" → "a6400"
+    def normalize_models(n):
+        # "alpha NNN" → "aNNN"
+        n=re.sub(r'\balpha\s+(\d)',r'a\1',n)
+        # a7cm2, a7cii, a7c2 → a7c
+        n=re.sub(r'\ba7c\s*(ii|m2|2)\b',r'a7c',n)
+        # a7riv, a7rv, a7r5, a7r4 → a7r
+        n=re.sub(r'\ba7r\s*(ii+|[2-9]|iv|v)\b',r'a7r',n)
+        # a7siii, a7s3 → a7s
+        n=re.sub(r'\ba7s\s*(ii+|[23]|iii)\b',r'a7s',n)
+        # a7 iv/v/iii/ii → a7 (keep as a7)
+        n=re.sub(r'\ba7\s*(ii+|iv|v|[2-9])\b',r'a7',n)
+        return n
+    na2,nb2=normalize_models(na),normalize_models(nb)
+    ma=set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-[\w-]+|dsc-[\w-]+',na2))
+    mb=set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-[\w-]+|dsc-[\w-]+',nb2))
     if ma and mb: return 100 if ma&mb else 0
+    # Fallback: word overlap (for cases where model regex doesn't extract)
     return min(70,len(set(na.split())&set(nb.split()))*15)
 
 def find_match(our,comps,pt):
