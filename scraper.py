@@ -402,11 +402,20 @@ def parse_amazon(pt):
         nf=0
         for item in items:
             try:
+                # Get product title - try multiple selectors
+                ne=(item.select_one('.a-size-medium.a-color-base.a-text-normal') or
+                    item.select_one('.a-size-base-plus.a-color-base.a-text-normal') or
+                    item.select_one('h2 a span') or
+                    item.select_one('h2 span'))
                 h2=item.select_one('h2')
-                if not h2: continue
-                name=h2.get_text(strip=True)
+                # Use span text if available (more precise), fallback to full h2
+                if ne:
+                    name=ne.get_text(strip=True)
+                elif h2:
+                    name=h2.get_text(strip=True)
+                else:
+                    continue
                 if not name or len(name)<5: continue
-                # Price: whole + fraction
                 pw=item.select_one('.a-price-whole'); pf=item.select_one('.a-price-fraction')
                 price=None
                 if pw:
@@ -428,7 +437,7 @@ def parse_amazon(pt):
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
                 if not val(name):
-                    if page==1: log.info(f'[Amazon SA] REJECTED by validator: {name[:80]}')
+                    if page==1: log.info(f'[Amazon SA] REJECTED: {name[:80]}')
                     continue
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Amazon SA] {e}')
