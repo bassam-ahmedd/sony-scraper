@@ -663,9 +663,15 @@ def parse_camerabox(pt):
     products=[]; log.info(f'[CameraBox] fetching with scroll')
     try:
         html=zenrows_js(url,wait=8000,scroll=True)
-        if not html: return products
-        results=salla_parse(html,'https://camerabox.com.sa','CameraBox',val)
-        products.extend(results)
+        if html:
+            results=salla_parse(html,'https://camerabox.com.sa','CameraBox',val)
+            # Retry with longer wait if no items found
+            if not results:
+                log.info('[CameraBox] retrying with wait=15000')
+                html=zenrows_js(url,wait=15000,scroll=True)
+                if html:
+                    results=salla_parse(html,'https://camerabox.com.sa','CameraBox',val)
+            products.extend(results)
     except Exception as e: log.error(f'[CameraBox] {e}')
     log.info(f'[CameraBox] {pt}: {len(products)}'); return products
 
@@ -691,27 +697,61 @@ def lens_score(a,b):
 
 def cam_score(a,b):
     na,nb=norm(a),norm(b)
-    # Normalize model variants before extracting:
-    # a7cm2 → a7c, a7riii → a7r, a7siii → a7s (strip generation suffixes)
-    # Also handle "alpha 7" → "a7", "alpha 6400" → "a6400"
-    def normalize_models(n):
+
+    def extract_models(n):
+        """Extract normalized model identifiers that include generation."""
+        # Normalize written-out generations to numbers: iii→3, iv→4, v→5, ii→2
+        n=re.sub(r'\biii\b','3',n); n=re.sub(r'\biv\b','4',n)
+        n=re.sub(r'\bv\b(?!\w)','5',n); n=re.sub(r'\bii\b','2',n)
         # "alpha NNN" → "aNNN"
         n=re.sub(r'\balpha\s+(\d)',r'a\1',n)
-        # a7cm2, a7cii, a7c2 → a7c
-        n=re.sub(r'\ba7c\s*(ii|m2|2)\b',r'a7c',n)
-        # a7riv, a7rv, a7r5, a7r4 → a7r
-        n=re.sub(r'\ba7r\s*(ii+|[2-9]|iv|v)\b',r'a7r',n)
-        # a7siii, a7s3 → a7s
-        n=re.sub(r'\ba7s\s*(ii+|[23]|iii)\b',r'a7s',n)
-        # a7 iv/v/iii/ii → a7 (keep as a7)
-        n=re.sub(r'\ba7\s*(ii+|iv|v|[2-9])\b',r'a7',n)
-        return n
-    na2,nb2=normalize_models(na),normalize_models(nb)
-    ma=set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-[\w-]+|dsc-[\w-]+',na2))
-    mb=set(re.findall(r'a\d[a-z0-9]*|zv-\w+|fx\d+|ilce-[\w-]+|dsc-[\w-]+',nb2))
-    if ma and mb: return 100 if ma&mb else 0
-    # Fallback: word overlap (for cases where model regex doesn't extract)
-    return min(70,len(set(na.split())&set(nb.split()))*15)
+        # Normalize a7cm2/a7cii/a7c2 → a7c2 (keep the "2" as generation)
+        n=re.sub(r'\ba7c\s*m?(\d)\b',r'a7c\1',n)
+        n=re.sub(r'\ba7c\b(?!\d)','a7c1',n)  # bare a7c → a7c1 (first gen)
+        # Extract model+generation patterns
+        models=set()
+        # a7rV, a7sIII, a7cII etc — letter variants with generation
+        for m in re.finditer(r'\ba7([rsc])\s*(\d)\b',n):
+            models.add(f'a7{m.group(1)}{m.group(2)}')
+        # bare a7 with generation (a7 IV, a7 III, a7 V)
+        for m in re.finditer(r'\ba7\s+(\d)\b',n):
+            models.add(f'a7{m.group(1)}')
+        # a7 without any suffix or generation → just "a7" (match any a7 gen)
+        if re.search(r'\ba7\b(?!\s*[rscm\d])',n):
+            models.add('a7')
+        # Other models: a9, a6xxx, zv-, fx, ilce, dsc
+        for m in re.finditer(r'\ba9\s*(\d?)\b',n):
+            models.add('a9'+(m.group(1) or ''))
+        for m in re.finditer(r'\ba6[0-9]{3}[a-z]?\b',n):
+            models.add(m.group(0))
+        for m in re.finditer(r'\ba1\b',n):
+            models.add('a1')
+        for m in re.finditer(r'\bzv-[a-z0-9]+',n):
+            models.add(m.group(0))
+        for m in re.finditer(r'\bfx[23679][a0]?\b',n):
+            models.add(m.group(0))
+        for m in re.finditer(r'\bilce-[\w-]+',n):
+            models.add(m.group(0))
+        for m in re.finditer(r'\bilme-[\w-]+',n):
+            models.add(m.group(0))
+        return models
+
+    ma=extract_models(na); mb=extract_models(nb)
+
+    if not ma or not mb:
+        # Fallback: word overlap
+        return min(70,len(set(na.split())&set(nb.split()))*15)
+
+    # If models extracted on both sides, they must intersect
+    # Special case: bare "a7" matches any a7 generation
+    def models_match(ma,mb):
+        if ma&mb: return True
+        # "a7" (no gen) matches "a74", "a75" etc
+        if 'a7' in ma and any(m.startswith('a7') for m in mb): return True
+        if 'a7' in mb and any(m.startswith('a7') for m in ma): return True
+        return False
+
+    return 100 if models_match(ma,mb) else 0
 
 def find_match(our,comps,pt):
     sc=lens_score if pt=='lenses' else cam_score
