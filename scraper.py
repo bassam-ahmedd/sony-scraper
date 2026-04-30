@@ -707,19 +707,40 @@ def cam_score(a,b):
         # a7cm2/a7cii/a7c2 → a7c2
         n=re.sub(r'\ba7c\s*m?(\d)\b',r'a7c\1',n)
         n=re.sub(r'\ba7c\b(?!\d)','a7c1',n)
+        # ── ZV normalization BEFORE pattern matching ──────────────────────────
+        # ZV-1 II and ZV-1M2 are the SAME camera → normalize to "zv-1gen2"
+        n=re.sub(r'\bzv-1\s*m2\b','zv-1gen2',n)  # ZV-1M2
+        n=re.sub(r'\bzv-1\s+2\b','zv-1gen2',n)   # ZV-1 2 (after roman numeral norm of ZV-1 II)
+        # ZV-1F is its own model
+        n=re.sub(r'\bzv-1f\b','zv-1f',n)
+        # Bare ZV-1 (no suffix) → first gen
+        n=re.sub(r'\bzv-1\b(?!gen|\s*[m\d])','zv-1gen1',n)
+        # ZV-E10 II → zv-e10gen2; ZV-E10 / ZV-E10K (kit) → zv-e10gen1
+        n=re.sub(r'\bzv-e10\s+2\b','zv-e10gen2',n)
+        n=re.sub(r'\bzv-e10[klb]?\b','zv-e10gen1',n)
         models=set()
-        # a7r5, a7s3, a7c2 etc — letter variants WITH generation
+        # a7 letter variants WITH generation (a7r5, a7s3, a7c2)
         for m in re.finditer(r'\ba7([rsc])\s*(\d)\b',n): models.add(f'a7{m.group(1)}{m.group(2)}')
-        # a7 IV → a74, a7 V → a75 etc
+        # a7 + generation (a7 4, a7 5 etc — after roman numeral normalization)
         for m in re.finditer(r'\ba7\s+(\d)\b',n): models.add(f'a7{m.group(1)}')
-        # bare a7 (no suffix, no gen) → wildcard matches any a7
+        # bare a7 = wildcard matches any a7 generation
         if re.search(r'\ba7\b(?!\s*[rscm\d])',n): models.add('a7')
-        # Other models
+        # a9 models
         for m in re.finditer(r'\ba9\s*(\d?)\b',n): models.add('a9'+(m.group(1) or ''))
+        # a6xxx models
         for m in re.finditer(r'\ba6[0-9]{3}[a-z]?\b',n): models.add(m.group(0))
+        # a1
         for m in re.finditer(r'\ba1\b',n): models.add('a1')
-        for m in re.finditer(r'\bzv-[a-z0-9]+',n): models.add(m.group(0))
+        # ZV models (after normalization)
+        for m in re.finditer(r'\bzv-1gen\d\b',n): models.add(m.group(0))
+        if re.search(r'\bzv-1f\b',n): models.add('zv-1f')
+        for m in re.finditer(r'\bzv-e10gen\d\b',n): models.add(m.group(0))
+        for m in re.finditer(r'\bzv-[a-z]\w+\b',n):
+            mv=m.group(0)
+            if 'gen' not in mv: models.add(mv)  # other ZV models like zv-e1
+        # FX models
         for m in re.finditer(r'\bfx[23679][a0]?\b',n): models.add(m.group(0))
+        # ILCE / ILME
         for m in re.finditer(r'\bilce-[\w-]+',n): models.add(m.group(0))
         for m in re.finditer(r'\bilme-[\w-]+',n): models.add(m.group(0))
         return models
