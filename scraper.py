@@ -44,7 +44,7 @@ URLS = {
     },
 }
 
-# ── Validators (tested against 26 real lenses + 22 real cameras) ─────────────
+# ── Validators ────────────────────────────────────────────────────────────────
 NON_LENS = [
     'lens cap','lens cover','front cap','rear cap','body cap',
     'lens hood','sun shade','uv filter','cpl filter','nd filter','variable nd',
@@ -98,11 +98,8 @@ def tr_east(s):
 def is_lens(name):
     n=norm(name)
     if any(k in n for k in NON_LENS): return False
-    # Reject camera body / kit names
     if re.search(r'\b(mirrorless camera|mirrorless digital camera|digital camera|vlog camera|cinema camera|camera body)\b',n): return False
-    # Must have a focal length
     if not re.search(r'\d+\s*mm',n): return False
-    # Must have aperture OR a strong lens identifier
     has_aperture=bool(re.search(r'\bf/?[\s]?\d+\.?\d*',n))
     has_id=any(k in n for k in LENS_ID)
     return has_aperture or has_id
@@ -110,7 +107,6 @@ def is_lens(name):
 def is_camera(name):
     n=norm(name)
     if any(k in n for k in NON_CAM): return False
-    # Reject pure lens products (focal + aperture + lens keyword, no camera type)
     is_pure_lens=(bool(re.search(r'\d+\s*mm',n)) and
                   bool(re.search(r'\bf/?[\s]?\d+\.?\d*',n)) and
                   any(k in n for k in [' lens','g master','vario-tessar','fe pz','e pz']) and
@@ -139,9 +135,23 @@ def pparse(text):
         except: continue
     return None
 
+def detect_avail(item):
+    """Robustly detect product availability from any HTML element."""
+    t=item.get_text().lower()
+    # Strong OUT OF STOCK signals (check these first)
+    OOS=['out of stock','sold out','غير متوفر','نفد المخزون','نفذ','نفد',
+         'notify me when in stock','notify me when available','notify when available',
+         'notify when in stock','تنبيهي عند توفره','unavailable','not available',
+         'enquire now','pre-order']
+    if any(x in t for x in OOS): return 'Out of Stock'
+    # Strong IN STOCK signals
+    INS=['add to cart','add to bag','buy now','أضف للسلة','أضف إلى السلة',
+         'in stock','متوفر','buy now']
+    if any(x in t for x in INS): return 'In Stock'
+    return 'In Stock'  # default
+
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 def zenrows_js(url, wait=10000, scroll=False, retries=2):
-    """ZenRows with JS rendering — for React/Salla/Next.js sites."""
     p={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true',
        'js_render':'true','proxy_country':'sa','wait':str(wait)}
     if scroll:
@@ -159,7 +169,6 @@ def zenrows_js(url, wait=10000, scroll=False, retries=2):
     return None
 
 def zenrows_std(url, retries=2):
-    """ZenRows standard (no JS) — for server-rendered sites like Amazon, OpenCart."""
     p={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true','proxy_country':'sa'}
     for a in range(retries+1):
         try:
@@ -171,7 +180,6 @@ def zenrows_std(url, retries=2):
     return None
 
 def plain(url, ssl=True, retries=2):
-    """Direct HTTP request — fastest, no cost."""
     h={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
        'Accept-Language':'en-US,en;q=0.9'}
     for a in range(retries+1):
@@ -185,7 +193,6 @@ def plain(url, ssl=True, retries=2):
 
 # ── Shared parsers ────────────────────────────────────────────────────────────
 def opencart_parse(html, base_url, label, validator):
-    """Parse OpenCart product listings."""
     soup=BeautifulSoup(html,'lxml')
     items=soup.select('.product-thumb,.product-layout,[class*="product-item"]')
     log.info(f'[{label}] found {len(items)} items')
@@ -210,13 +217,12 @@ def opencart_parse(html, base_url, label, validator):
             if not validator(name): continue
             pe=item.select_one('.price-new,.price-normal,.price,[class*="price"]')
             price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
-            avail='Out of Stock' if 'out of stock' in item.get_text().lower() else 'In Stock'
+            avail=detect_avail(item)
             results.append({'name':name,'price':price,'availability':avail,'url':link})
         except Exception as e: log.debug(f'[{label}] {e}')
     return results
 
 def salla_parse(html, base_url, label, validator):
-    """Parse Salla platform product listings."""
     soup=BeautifulSoup(html,'lxml')
     items=soup.select('custom-salla-product-card,s-product-card-entry,[class~="s-product-card-entry"]')
     log.info(f'[{label}] found {len(items)} salla items')
@@ -250,8 +256,7 @@ def salla_parse(html, base_url, label, validator):
                 for el in item.select('h4,[class*="price"]'):
                     p=pparse(tr_east(el.get_text(strip=True)))
                     if p and p>100: price=p; break
-            card=item.get_text()
-            avail='Out of Stock' if 'out of stock' in card.lower() or 'نفد' in card else 'In Stock'
+            avail=detect_avail(item)
             results.append({'name':name,'price':price,'availability':avail,'url':link})
         except Exception as e: log.debug(f'[{label}] {e}')
     log.info(f'[{label}] returning {len(results)} valid items')
@@ -266,7 +271,8 @@ def parse_our_site(pt):
         log.info(f'[Our Site] page {page}')
         html=zenrows_js(url,wait=8000)
         if not html: break
-        soup=BeautifulSoup(html,'lxml'); items=soup.select('li.product-item,.product-item-info'); nf=0
+        soup=BeautifulSoup(html,'lxml')
+        items=soup.select('li.product-item,.product-item-info'); nf=0
         for item in items:
             try:
                 ne=item.select_one('.product-item-name a,.product-item-link')
@@ -286,8 +292,18 @@ def parse_our_site(pt):
                 if len(products)==0:
                     pe_raw=item.select_one('.price')
                     log.info(f'[Our Site] first price raw: {pe_raw.get_text(strip=True) if pe_raw else "NOT FOUND"}')
-                ae=item.select_one('.stock,.availability')
-                avail='Out of Stock' if ae and 'out' in ae.get_text().lower() else 'In Stock'
+                # Availability: check Magento stock signals
+                item_html=str(item).lower()
+                if ('out-of-stock' in item_html or 'out of stock' in item_html or
+                    'notify' in item_html or 'sold-out' in item_html or
+                    'product-item-info-unavailable' in item_html):
+                    avail='Out of Stock'
+                elif item.select_one('[class*="tocart"],[class*="to-cart"],[title*="Cart"]'):
+                    avail='In Stock'
+                elif not price:
+                    avail='Out of Stock'
+                else:
+                    avail='In Stock'
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Our Site] {e}')
         if nf==0: break
@@ -301,7 +317,6 @@ def parse_qomra(pt):
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Qomra] page {page}')
         html=zenrows_js(url,wait=15000)
-        # Retry if no salla items rendered yet
         if html:
             test=BeautifulSoup(html,'lxml')
             if not test.select('custom-salla-product-card,s-product-card-entry'):
@@ -329,7 +344,6 @@ def parse_mestores(pt):
         if not anchors:
             g=soup.select_one('[class*="gallery-root"],[class*="infinite-scroll"]')
             if g: anchors=[a for a in g.select('a[href]') if '/en_sa/' in a.get('href','')]
-        # Retry with longer wait if still empty
         if not anchors:
             log.info(f'[Me Stores] retrying p{page} with wait=20000')
             html=zenrows_js(url,wait=20000)
@@ -370,8 +384,7 @@ def parse_mestores(pt):
                     for el in a.select('span'):
                         p=pparse(tr_east(el.get_text(strip=True)))
                         if p and p>100: price=p; break
-                ct=a.get_text().lower()
-                avail='Out of Stock' if 'out of stock' in ct or 'notify me' in ct else 'In Stock'
+                avail=detect_avail(a)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Me Stores] {e}')
         if nf==0: break
@@ -410,14 +423,13 @@ def parse_abdulwahed(pt):
                 for el in card.select('span,div,p'):
                     p=pparse(tr_east(el.get_text(strip=True)))
                     if p and 100<p<200000: price=p; break
-                ct=card.get_text().lower()
-                avail='Out of Stock' if 'out of stock' in ct or 'notify' in ct else 'In Stock'
+                avail=detect_avail(card)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Abdulwahed] {e}')
         log.info(f'[Abdulwahed] p{page}: {nf} Sony products')
         if nf==0: consecutive_empty+=1
         else: consecutive_empty=0
-        if consecutive_empty>=3: break  # stop after 3 empty pages
+        if consecutive_empty>=3: break
         page+=1
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
@@ -427,7 +439,6 @@ def parse_amazon(pt):
     while page<=15:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Amazon SA] page {page}')
-        # Amazon works best with standard ZenRows (no JS render)
         html=zenrows_std(url)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
@@ -439,19 +450,11 @@ def parse_amazon(pt):
         nf=0
         for item in items:
             try:
-                # Get product title - try multiple selectors
                 ne=(item.select_one('.a-size-medium.a-color-base.a-text-normal') or
                     item.select_one('.a-size-base-plus.a-color-base.a-text-normal') or
-                    item.select_one('h2 a span') or
-                    item.select_one('h2 span'))
-                h2=item.select_one('h2')
-                # Use span text if available (more precise), fallback to full h2
-                if ne:
-                    name=ne.get_text(strip=True)
-                elif h2:
-                    name=h2.get_text(strip=True)
-                else:
-                    continue
+                    item.select_one('h2 a span') or item.select_one('h2'))
+                if not ne: continue
+                name=ne.get_text(strip=True)
                 if not name or len(name)<5: continue
                 pw=item.select_one('.a-price-whole'); pf=item.select_one('.a-price-fraction')
                 price=None
@@ -460,7 +463,12 @@ def parse_amazon(pt):
                     ps+='.'+pf.get_text(strip=True) if pf else '.00'
                     try: price=float(ps)
                     except: pass
-                avail='In Stock' if price else 'Out of Stock'
+                # Amazon: if no price shown, item is likely out of stock
+                avail='Out of Stock' if not price else 'In Stock'
+                # Check explicit unavailable text
+                it=item.get_text().lower()
+                if 'currently unavailable' in it or 'out of stock' in it:
+                    avail='Out of Stock'
                 le=item.select_one('h2 a'); href=le.get('href','') if le else ''
                 if '/dp/' in href:
                     asin=href.split('/dp/')[1].split('/')[0]
@@ -470,17 +478,15 @@ def parse_amazon(pt):
                     link=f'https://www.amazon.sa/dp/{asin}' if asin else ''
                 if not link or link in seen: continue
                 seen.add(link)
-                if page==1 and len(seen)<=5: log.info(f'[Amazon SA] candidate: {name[:80]}')
-                # Amazon SA brand-filtered URL — don't require 'sony' in name
-                # (products are listed without brand prefix e.g. "Alpha 7 IV" not "Sony Alpha 7 IV")
+                if page==1 and nf<5: log.info(f'[Amazon SA] candidate: {name[:80]}')
                 name=fix_arabic(name,link,val)
                 if not val(name):
-                    if page==1: log.info(f'[Amazon SA] REJECTED: {name[:80]}')
+                    if page==1 and nf<3: log.info(f'[Amazon SA] REJECTED: {name[:80]}')
                     continue
-                products.append({'name':'Sony '+name if not name.lower().startswith('sony') else name,
-                                  'price':price,'availability':avail,'url':link}); nf+=1
+                # Prepend Sony if missing
+                if not name.lower().startswith('sony'): name='Sony '+name
+                products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Amazon SA] {e}')
-        # Check for next page
         nxt=soup.select_one('.s-pagination-next:not(.s-pagination-disabled)')
         if not nxt: break
         page+=1; time.sleep(2)
@@ -500,7 +506,6 @@ def parse_noon(pt):
                soup.select('[class*="product-block"]') or
                soup.select('[class*="productContainer"]') or
                [a.find_parent('div') for a in soup.select('a[href*="/p/"]') if a.find_parent('div')])
-        # Deduplicate
         seen_ids=set(); unique=[]
         for it in items:
             if id(it) not in seen_ids: seen_ids.add(id(it)); unique.append(it)
@@ -526,7 +531,6 @@ def parse_noon(pt):
                 if 'sony' not in norm(name): continue
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
-                # Price: try specific selectors, then fallback
                 price=None
                 for sel in ['[data-qa="price-amount"]','[class*="priceNow"]','[class*="selling-price"]','[class*="sellingPrice"]','[class*="price-now"]']:
                     pe=item.select_one(sel)
@@ -539,8 +543,7 @@ def parse_noon(pt):
                         if re.match(r'^\d{3,5}$',txt):
                             p=pparse(txt)
                             if p and 100<p<100000: price=p; break
-                ct=item.get_text().lower()
-                avail='Out of Stock' if 'out of stock' in ct or 'sold out' in ct else 'In Stock'
+                avail=detect_avail(item)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Noon] {e}')
         nxt=soup.select_one('[aria-label="Next"],[class*="nextPage"],[class*="next-page"]')
@@ -554,7 +557,6 @@ def parse_cameramix(pt):
     while page<=20:
         url=f"{base}?page={page}" if page>1 else base
         log.info(f'[CameraMix] page {page}')
-        # Try standard ZenRows (no JS render) — works for OpenCart
         html=zenrows_std(url)
         if not html: break
         results=opencart_parse(html,'https://www.cameramix.com','CameraMix',val)
@@ -592,7 +594,7 @@ def parse_camtime(pt):
         sep='&' if '?' in base else '?'
         url=base if page==1 else f"{base}{sep}page={page}"
         log.info(f'[CamTime] page {page}')
-        html=plain(url,ssl=False)  # CamTime allows direct access
+        html=plain(url,ssl=False)
         if not html: html=zenrows_js(url,wait=8000)
         if not html: break
         results=opencart_parse(html,'https://camtime.sa','CamTime',val)
@@ -622,7 +624,6 @@ def parse_alamcam(pt):
         if not items:
             body=soup.find('body'); log.warning(f'[AlamCam] snippet: {str(body)[:300] if body else ""}')
             break
-        # Deduplicate by URL
         seen_u=set(); deduped=[]
         for item in items:
             a=item.select_one('a[href*="alamcam"]') or item.select_one('a[href^="/"]')
@@ -649,7 +650,7 @@ def parse_alamcam(pt):
                 if not val(name): continue
                 pe=item.select_one('.price-new,.price-normal,.price')
                 price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
-                avail='Out of Stock' if any(x in item.get_text().lower() for x in ['out of stock','unavailable','sold out']) else 'In Stock'
+                avail=detect_avail(item)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[AlamCam] {e}')
         log.info(f'[AlamCam] p{page}: {nf} Sony products')
@@ -665,7 +666,6 @@ def parse_camerabox(pt):
         html=zenrows_js(url,wait=8000,scroll=True)
         if html:
             results=salla_parse(html,'https://camerabox.com.sa','CameraBox',val)
-            # Retry with longer wait if no items found
             if not results:
                 log.info('[CameraBox] retrying with wait=15000')
                 html=zenrows_js(url,wait=15000,scroll=True)
@@ -699,54 +699,38 @@ def cam_score(a,b):
     na,nb=norm(a),norm(b)
 
     def extract_models(n):
-        """Extract normalized model identifiers that include generation."""
-        # Normalize written-out generations to numbers: iii→3, iv→4, v→5, ii→2
+        # Normalize roman numerals to digits
         n=re.sub(r'\biii\b','3',n); n=re.sub(r'\biv\b','4',n)
         n=re.sub(r'\bv\b(?!\w)','5',n); n=re.sub(r'\bii\b','2',n)
         # "alpha NNN" → "aNNN"
         n=re.sub(r'\balpha\s+(\d)',r'a\1',n)
-        # Normalize a7cm2/a7cii/a7c2 → a7c2 (keep the "2" as generation)
+        # a7cm2/a7cii/a7c2 → a7c2
         n=re.sub(r'\ba7c\s*m?(\d)\b',r'a7c\1',n)
-        n=re.sub(r'\ba7c\b(?!\d)','a7c1',n)  # bare a7c → a7c1 (first gen)
-        # Extract model+generation patterns
+        n=re.sub(r'\ba7c\b(?!\d)','a7c1',n)
         models=set()
-        # a7rV, a7sIII, a7cII etc — letter variants with generation
-        for m in re.finditer(r'\ba7([rsc])\s*(\d)\b',n):
-            models.add(f'a7{m.group(1)}{m.group(2)}')
-        # bare a7 with generation (a7 IV, a7 III, a7 V)
-        for m in re.finditer(r'\ba7\s+(\d)\b',n):
-            models.add(f'a7{m.group(1)}')
-        # a7 without any suffix or generation → just "a7" (match any a7 gen)
-        if re.search(r'\ba7\b(?!\s*[rscm\d])',n):
-            models.add('a7')
-        # Other models: a9, a6xxx, zv-, fx, ilce, dsc
-        for m in re.finditer(r'\ba9\s*(\d?)\b',n):
-            models.add('a9'+(m.group(1) or ''))
-        for m in re.finditer(r'\ba6[0-9]{3}[a-z]?\b',n):
-            models.add(m.group(0))
-        for m in re.finditer(r'\ba1\b',n):
-            models.add('a1')
-        for m in re.finditer(r'\bzv-[a-z0-9]+',n):
-            models.add(m.group(0))
-        for m in re.finditer(r'\bfx[23679][a0]?\b',n):
-            models.add(m.group(0))
-        for m in re.finditer(r'\bilce-[\w-]+',n):
-            models.add(m.group(0))
-        for m in re.finditer(r'\bilme-[\w-]+',n):
-            models.add(m.group(0))
+        # a7r5, a7s3, a7c2 etc — letter variants WITH generation
+        for m in re.finditer(r'\ba7([rsc])\s*(\d)\b',n): models.add(f'a7{m.group(1)}{m.group(2)}')
+        # a7 IV → a74, a7 V → a75 etc
+        for m in re.finditer(r'\ba7\s+(\d)\b',n): models.add(f'a7{m.group(1)}')
+        # bare a7 (no suffix, no gen) → wildcard matches any a7
+        if re.search(r'\ba7\b(?!\s*[rscm\d])',n): models.add('a7')
+        # Other models
+        for m in re.finditer(r'\ba9\s*(\d?)\b',n): models.add('a9'+(m.group(1) or ''))
+        for m in re.finditer(r'\ba6[0-9]{3}[a-z]?\b',n): models.add(m.group(0))
+        for m in re.finditer(r'\ba1\b',n): models.add('a1')
+        for m in re.finditer(r'\bzv-[a-z0-9]+',n): models.add(m.group(0))
+        for m in re.finditer(r'\bfx[23679][a0]?\b',n): models.add(m.group(0))
+        for m in re.finditer(r'\bilce-[\w-]+',n): models.add(m.group(0))
+        for m in re.finditer(r'\bilme-[\w-]+',n): models.add(m.group(0))
         return models
 
     ma=extract_models(na); mb=extract_models(nb)
-
     if not ma or not mb:
-        # Fallback: word overlap
         return min(70,len(set(na.split())&set(nb.split()))*15)
 
-    # If models extracted on both sides, they must intersect
-    # Special case: bare "a7" matches any a7 generation
     def models_match(ma,mb):
         if ma&mb: return True
-        # "a7" (no gen) matches "a74", "a75" etc
+        # bare "a7" matches any a7 generation
         if 'a7' in ma and any(m.startswith('a7') for m in mb): return True
         if 'a7' in mb and any(m.startswith('a7') for m in ma): return True
         return False
@@ -875,23 +859,16 @@ def write_sheet(client,pt,rows):
     log.info(f'Written summary to [{sn}]')
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-PARSERS={
-    'our_site':   parse_our_site,
-    'qomra':      parse_qomra,
-    'mestores':   parse_mestores,
-    'abdulwahed': parse_abdulwahed,
-    'amazon':     parse_amazon,
-    'noon':       parse_noon,
-    'cameramix':  parse_cameramix,
-    'pclub':      parse_pclub,
-    'camtime':    parse_camtime,
-    'alamcam':    parse_alamcam,
-    'camerabox':  parse_camerabox,
-}
 COMP_KEYS={
     'Qomra':'qomra','Me Stores':'mestores','Abdulwahed':'abdulwahed',
     'Amazon SA':'amazon','Noon':'noon','CameraMix':'cameramix',
     'PClub':'pclub','CamTime':'camtime','AlamCam':'alamcam','CameraBox':'camerabox',
+}
+PARSERS={
+    'our_site':parse_our_site,'qomra':parse_qomra,'mestores':parse_mestores,
+    'abdulwahed':parse_abdulwahed,'amazon':parse_amazon,'noon':parse_noon,
+    'cameramix':parse_cameramix,'pclub':parse_pclub,'camtime':parse_camtime,
+    'alamcam':parse_alamcam,'camerabox':parse_camerabox,
 }
 
 def safe(key,label,pt):
