@@ -118,12 +118,59 @@ def is_camera(name):
     has_type=any(k in n for k in CAM_TYPES)
     return has_model or has_type
 
-def fix_arabic(name,url,val):
+def slug_to_name(slug):
+    """Convert URL slug to clean Sony product name."""
+    s = slug.rstrip('/- ').split('?')[0]
+    s = re.sub(r'\.html?$', '', s, flags=re.I)
+    # Remove trailing numeric IDs: -p-5006409, -2-1693, -3496 etc.
+    s = re.sub(r'[-_]p[-_]\d+$', '', s)
+    s = re.sub(r'[-_]\d{4,}$', '', s)
+    s = re.sub(r'[-_]\d+-\d+$', '', s)
+    # Restore ZV model hyphens BEFORE general substitution
+    s = re.sub(r'\b(zv)[-_](e?\d+[a-z0-9]*)', r'\1-\2', s, flags=re.I)
+    s = re.sub(r'\b(ilce|ilme|dsc|sel)[-_](\w+)', r'\1-\2', s, flags=re.I)
+    # Aperture: f-3-5-5-6 → f3.5-5.6, f-1-8 → f1.8
+    s = re.sub(r'\bf[-_](\d)[-_](\d)[-_](\d)[-_](\d)\b', r'f\1.\2-\3.\4', s, flags=re.I)
+    s = re.sub(r'\bf[-_](\d)[-_](\d)\b', r'f\1.\2', s, flags=re.I)
+    s = re.sub(r'\bf[-_](\d{1,2})\b', r'f\1', s, flags=re.I)
+    # Focal ranges: 16-50mm
+    s = re.sub(r'(\d{2,3})[-_](\d{2,3})[-_]?(mm)', r'\1-\2mm', s, flags=re.I)
+    # Remove ILCE/ILME/P SKU junk at end
+    s = re.sub(r'[-_]?(ilce|ilme)[-_]?\w*\s*$', '', s, flags=re.I)
+    s = re.sub(r'[-_][a-z]-\d+\s*$', '', s, flags=re.I)
+    # Replace remaining separators
+    s = re.sub(r'[-_]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    # Ensure Sony prefix
+    if not re.match(r'sony\b', s, re.I):
+        s = 'Sony ' + s
+    # Smart title case
+    words = s.split()
+    result = []
+    FORCE_UPPER = {'ii','iii','iv','xlr','usb','sel','fe','oss','gm','aps','dsc'}
+    FORCE_LOWER = {'with','and','or','for','the','a','an','of','in','to','by'}
+    # Preserve case for known prefixes
+    FORCE_EXACT = {'sony':'Sony','zv':'ZV','fx':'FX','ilce':'ILCE','ilme':'ILME'}
+    for i, w in enumerate(words):
+        wl = w.lower()
+        if wl in FORCE_EXACT: result.append(FORCE_EXACT[wl])
+        elif wl in FORCE_UPPER: result.append(w.upper())
+        elif wl in FORCE_LOWER and i > 0: result.append(wl)
+        else: result.append(w.capitalize())
+    return ' '.join(result)
+
+def fix_arabic(name, url, val):
+    """If name is Arabic or a raw slug code, replace with slug-derived name."""
     if any('\u0600'<=c<='\u06FF' for c in name):
-        slug=url.rstrip('/').split('/')[-1].split('?')[0]
-        sn=re.sub(r'[_-]',' ',slug).title()
-        sn=re.sub(r'\.html?$','',sn,flags=re.I).strip()
-        if val(sn): return sn
+        # Try path segments from the end, skip pure Arabic/number segments
+        parts = [p for p in url.split('/') if p and not p.startswith('?')]
+        for part in reversed(parts):
+            part = part.split('?')[0]
+            # Must contain Latin characters (actual slug)
+            if not re.search(r'[a-zA-Z]{3,}', part): continue
+            sn = slug_to_name(part)
+            if sn and len(sn) > 10 and val(sn):
+                return sn
     return name
 
 def pparse(text):
@@ -248,7 +295,7 @@ def salla_parse(html, base_url, label, validator):
                 if img: name=img.get('alt','').strip()
             if not name:
                 slug=link.rstrip('/').split('/')[-1].split('?')[0]
-                name=re.sub(r'[_-]',' ',slug).title()
+                name=slug_to_name(slug)
             name=fix_arabic(name,link,validator)
             if logged<3: log.info(f'[{label}] candidate: {name[:80]}'); logged+=1
             if not validator(name): continue
@@ -379,7 +426,7 @@ def parse_mestores(pt):
                     if tip: name=tip.get_text(strip=True)
                 if not name:
                     slug=link.rstrip('/').split('/')[-1].split('?')[0]
-                    name=re.sub(r'[_-]',' ',slug).title()
+                    name=slug_to_name(slug)
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
                 pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
@@ -732,19 +779,25 @@ def cam_score(a,b):
         # a7cm2/a7cii/a7c2 → a7c2
         n=re.sub(r'\ba7c\s*m?(\d)\b',r'a7c\1',n)
         n=re.sub(r'\ba7c\b(?!\d)','a7c1',n)
-        # ── ZV normalization BEFORE pattern matching ──────────────────────────
-        # ZV-1 II and ZV-1M2 are the SAME camera → normalize to "zv-1gen2"
-        n=re.sub(r'\bzv-1\s*m2\b','zv-1gen2',n)  # ZV-1M2
-        n=re.sub(r'\bzv-1\s+2\b','zv-1gen2',n)   # ZV-1 2 (after roman numeral norm of ZV-1 II)
+        # ── ZV normalization ─────────────────────────────────────────────────
+        # Handle no-hyphen variants from URL slugs: "zv e10" → "zv-e10"
+        n=re.sub(r'\bzv\s+e10\s*m2[k]?\b','zv-e10gen2',n)  # "zv e10m2k" → gen2
+        n=re.sub(r'\bzv\s+e10\s+2\b','zv-e10gen2',n)        # "zv e10 2" → gen2
+        n=re.sub(r'\bzv\s+e10\b','zv-e10',n)                # "zv e10" → "zv-e10"
+        n=re.sub(r'\bzv\s+e1\b','zv-e1',n)                  # "zv e1" → "zv-e1"
+        n=re.sub(r'\bzv\s+1\b','zv-1',n)                    # "zv 1" → "zv-1"
+        # ZV-E10M2K / ZV-E10M2 = ZV-E10 gen2
+        n=re.sub(r'\bzv-e10\s*m2[k]?\b','zv-e10gen2',n)
+        # ZV-1 II and ZV-1M2 → zv-1gen2
+        n=re.sub(r'\bzv-1\s*m2\b','zv-1gen2',n)
+        n=re.sub(r'\bzv-1\s+2\b','zv-1gen2',n)
         # ZV-1F is its own model
         n=re.sub(r'\bzv-1f\b','zv-1f',n)
         # Bare ZV-1 (no suffix) → first gen
         n=re.sub(r'\bzv-1\b(?!gen|\s*[m\d])','zv-1gen1',n)
-        # ZV-E10 II → zv-e10gen2: catch "zv-e10 ii", "zv-e10 2", "zv-e10ii"
-        # IMPORTANT: do this BEFORE the ii→2 normalization happens at start
-        # We re-apply here since roman numeral was already converted to 2
-        n=re.sub(r'\bzv-e10\s*2\b','zv-e10gen2',n)   # zv-e10 2 / zv-e102
-        n=re.sub(r'\bzv-e10\s+2\s','zv-e10gen2 ',n)  # zv-e10 2 mirrorless...
+        # ZV-E10 II → zv-e10gen2
+        n=re.sub(r'\bzv-e10\s*2\b','zv-e10gen2',n)
+        n=re.sub(r'\bzv-e10\s+2\s','zv-e10gen2 ',n)
         # ZV-E10 / ZV-E10K (kit) → zv-e10gen1
         n=re.sub(r'\bzv-e10[klb]?\b','zv-e10gen1',n)
         models=set()
@@ -783,11 +836,16 @@ def cam_score(a,b):
 
     # Extract kit lens from name (e.g. "with 28-60mm", "with 16-50mm", "18-135mm lens")
     def kit_lens(n):
-        m=re.search(r'(?:with\s+)?(\d+(?:-\d+)?mm)(?:\s+[fF]/?\d+)?.*(?:lens|kit)',n)
-        if m: return m.group(1)
-        m=re.search(r'(\d+(?:-\d+)?mm)',n)
-        if m and any(x in n for x in ['with lens','kit',' kit']):
-            return m.group(1)
+        # Match focal range: 16-50mm or 16 50mm (slug-derived)
+        m=re.search(r'(\d{2,3}[-\s]\d{2,3}\s*mm)',n)
+        if m:
+            fl=re.sub(r'\s+','-',m.group(1).strip())  # normalize "16 50mm" → "16-50mm"
+            if any(x in n for x in ['with lens','with '+m.group(1)[:6],'kit','mm lens',' lens ',' oss']):
+                return fl
+        # Single focal length with lens keyword
+        m2=re.search(r'(\d{2,3}\s*mm)',n)
+        if m2 and any(x in n for x in ['with lens','kit',' lens ']):
+            return re.sub(r'\s+','',m2.group(1))
         return None
 
     a_kit_lens=kit_lens(na); b_kit_lens=kit_lens(nb)
@@ -938,14 +996,22 @@ def get_client():
     scopes=['https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/drive']
     return gspread.authorize(Credentials.from_service_account_info(info,scopes=scopes))
 
+def make_url(url):
+    """Wrap URL in HYPERLINK formula for Google Sheets."""
+    if url and url.startswith('http'):
+        # Escape double quotes in URL
+        safe = url.replace('"', '%22')
+        return f'=HYPERLINK("{safe}","{safe}")'
+    return url or ''
+
 def row2list(row):
     out=[row['timestamp'],row['name'],
-         row.get('our_price',''),row.get('our_availability',''),row.get('our_url','')]
+         row.get('our_price',''),row.get('our_availability',''),make_url(row.get('our_url',''))]
     for s in COMPETITORS:
         d=row.get(s,{})
-        out+=[d.get('url',''),d.get('price',''),d.get('availability',''),d.get('diff',''),d.get('status','')]
+        out+=[make_url(d.get('url','')),d.get('price',''),d.get('availability',''),d.get('diff',''),d.get('status','')]
     out+=[row.get('lowest_price',''),row.get('cheapest_brand',''),
-          row.get('cheapest_link',''),row.get('our_diff_vs_cheapest','')]
+          make_url(row.get('cheapest_link','')),row.get('our_diff_vs_cheapest','')]
     return out
 
 def make_summary(rows,ts):
