@@ -721,8 +721,12 @@ def cam_score(a,b):
         n=re.sub(r'\bzv-1f\b','zv-1f',n)
         # Bare ZV-1 (no suffix) → first gen
         n=re.sub(r'\bzv-1\b(?!gen|\s*[m\d])','zv-1gen1',n)
-        # ZV-E10 II → zv-e10gen2; ZV-E10 / ZV-E10K (kit) → zv-e10gen1
-        n=re.sub(r'\bzv-e10\s+2\b','zv-e10gen2',n)
+        # ZV-E10 II → zv-e10gen2: catch "zv-e10 ii", "zv-e10 2", "zv-e10ii"
+        # IMPORTANT: do this BEFORE the ii→2 normalization happens at start
+        # We re-apply here since roman numeral was already converted to 2
+        n=re.sub(r'\bzv-e10\s*2\b','zv-e10gen2',n)   # zv-e10 2 / zv-e102
+        n=re.sub(r'\bzv-e10\s+2\s','zv-e10gen2 ',n)  # zv-e10 2 mirrorless...
+        # ZV-E10 / ZV-E10K (kit) → zv-e10gen1
         n=re.sub(r'\bzv-e10[klb]?\b','zv-e10gen1',n)
         models=set()
         # a7 letter variants WITH generation (a7r5, a7s3, a7c2)
@@ -780,23 +784,18 @@ def build_rows(our,comp_data,pt):
     rows=[]; ts=datetime.now().strftime('%Y-%m-%d %H:%M')
     sc=lens_score if pt=='lenses' else cam_score
 
-    # Pre-compute best match for each (our_product, competitor_source) pair
-    # Use greedy assignment: sort by score descending, assign best available
+    # Pre-compute greedy assignments: for each source, map our_url → best comp product
     assignments={src:{} for src in COMPETITORS}  # src → {our_url: comp_product}
     used_comp={src:set() for src in COMPETITORS}  # src → set of used comp URLs
 
-    # Build score matrix for each source
     for src in COMPETITORS:
         comps=comp_data.get(src,[])
         if not comps: continue
-        # Score all pairs
         pairs=[]
         for o in our:
             for cp in comps:
                 s=sc(o['name'],cp['name'])
-                if s>=80:
-                    pairs.append((s,o['url'],cp['url'],o,cp))
-        # Sort by score desc, then assign greedily
+                if s>=80: pairs.append((s,o['url'],cp['url'],o,cp))
         pairs.sort(key=lambda x:-x[0])
         assigned_our=set(); assigned_comp=set()
         for s,our_url,comp_url,o,cp in pairs:
@@ -819,7 +818,8 @@ def build_rows(our,comp_data,pt):
                     'Same price' if diff==0 else 'Not listed')
                 row[src]={'url':m['url'],'price':m['price'],'availability':m['availability'],'diff':diff,'status':st}
                 if m['price'] and m['availability']=='In Stock': pfl.append((src,m['price'],m['url']))
-            else: row[src]={'url':'','price':None,'availability':'','diff':None,'status':'Not listed'}
+            else:
+                row[src]={'url':'','price':None,'availability':'','diff':None,'status':'Not listed'}
         if pfl:
             ch=min(pfl,key=lambda x:x[1])
             row['lowest_price']=ch[1]; row['cheapest_brand']=ch[0]; row['cheapest_link']=ch[2]
@@ -829,17 +829,55 @@ def build_rows(our,comp_data,pt):
             row['our_diff_vs_cheapest']=None
         rows.append(row)
 
-    # Add unmatched competitor products as extra rows
+    # Consolidate unmatched competitor products:
+    # Group all unmatched products across all sources by product similarity,
+    # so the same product from multiple competitors appears in ONE row.
+    unmatched=[]
     for src in COMPETITORS:
         for cp in comp_data.get(src,[]):
-            if cp['url'] in used_comp[src]: continue
-            row={'timestamp':ts,'name':cp['name'],'our_price':None,'our_availability':'Not listed','our_url':''}
-            for ot in COMPETITORS:
-                if ot==src: row[ot]={'url':cp['url'],'price':cp['price'],'availability':cp['availability'],'diff':None,'status':'Not listed'}
-                else: row[ot]={'url':'','price':None,'availability':'','diff':None,'status':'Not listed'}
-            row['lowest_price']=cp['price']; row['cheapest_brand']=src
-            row['cheapest_link']=cp['url']; row['our_diff_vs_cheapest']=None
-            rows.append(row)
+            if cp['url'] not in used_comp[src]:
+                unmatched.append((src,cp))
+
+    # Cluster unmatched products: same product = score >= 80 between them
+    clusters=[]  # list of {src: cp}
+    for src,cp in unmatched:
+        placed=False
+        for cluster in clusters:
+            # Compare against any existing member of the cluster
+            rep_src,rep_cp=next(iter(cluster.items()))
+            if sc(cp['name'],rep_cp['name'])>=80:
+                if src not in cluster:  # only one product per source per cluster
+                    cluster[src]=cp
+                    placed=True
+                    break
+        if not placed:
+            clusters.append({src:cp})
+
+    # Each cluster becomes one row
+    for cluster in clusters:
+        # Use the name from the first source in COMPETITORS order
+        name=''; price=None
+        for src in COMPETITORS:
+            if src in cluster:
+                name=cluster[src]['name']
+                price=cluster[src]['price']
+                break
+        row={'timestamp':ts,'name':name,'our_price':None,'our_availability':'Not listed','our_url':''}
+        pfl=[]
+        for src in COMPETITORS:
+            if src in cluster:
+                cp=cluster[src]
+                row[src]={'url':cp['url'],'price':cp['price'],'availability':cp['availability'],'diff':None,'status':'Not listed'}
+                if cp['price'] and cp['availability']=='In Stock': pfl.append((src,cp['price'],cp['url']))
+            else:
+                row[src]={'url':'','price':None,'availability':'','diff':None,'status':'Not listed'}
+        if pfl:
+            ch=min(pfl,key=lambda x:x[1])
+            row['lowest_price']=ch[1]; row['cheapest_brand']=ch[0]; row['cheapest_link']=ch[2]
+        else:
+            row['lowest_price']=row['cheapest_brand']=row['cheapest_link']=None
+        row['our_diff_vs_cheapest']=None
+        rows.append(row)
     return rows
 
 # ── Google Sheets ─────────────────────────────────────────────────────────────
