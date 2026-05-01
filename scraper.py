@@ -388,32 +388,42 @@ def parse_qomra(pt):
         new=[p for p in results if p['url'] not in seen]
         for p in new: seen.add(p['url'])
         products.extend(new)
-        if not new: break
+        log.info(f'[Qomra] page {page}: {len(new)} new items (total {len(products)})')
+        if not new: break  # Stop when no new items found
         page+=1
     log.info(f'[Qomra] {pt}: {len(products)}'); return products
 
 def parse_mestores(pt):
     base=URLS[pt]['mestores']; val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set(); page=1
-    while page<=20:
+    while page<=10:
         url=base.format(page=page)
         log.info(f'[Me Stores] page {page}')
         html=zenrows_js(url,wait=15000)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
-        anchors=soup.select('a[href*="/en_sa/sony"]')
+        # Try multiple anchor patterns — mestores uses different classes
+        anchors=soup.select('a[href*="/en_sa/"]')
+        # Filter to product links only (exclude category/filter links)
+        anchors=[a for a in anchors if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
         if not anchors:
-            g=soup.select_one('[class*="gallery-root"],[class*="infinite-scroll"]')
-            if g: anchors=[a for a in g.select('a[href]') if '/en_sa/' in a.get('href','')]
+            # Fallback: get all anchors with product-like URLs
+            anchors=[a for a in soup.select('a[href]')
+                     if '/en_sa/' in a.get('href','') and
+                     re.search(r'-\d{3,}', a.get('href','')) and
+                     a.get('href','').count('/') >= 3]
         if not anchors:
             log.info(f'[Me Stores] retrying p{page} with wait=20000')
             html=zenrows_js(url,wait=20000)
             if html:
                 soup=BeautifulSoup(html,'lxml')
-                anchors=soup.select('a[href*="/en_sa/sony"]')
+                anchors=soup.select('a[href*="/en_sa/"]')
+                anchors=[a for a in anchors if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
                 if not anchors:
-                    g=soup.select_one('[class*="gallery-root"],[class*="infinite-scroll"]')
-                    if g: anchors=[a for a in g.select('a[href]') if '/en_sa/' in a.get('href','')]
+                    anchors=[a for a in soup.select('a[href]')
+                             if '/en_sa/' in a.get('href','') and
+                             re.search(r'-\d{3,}', a.get('href',''))and
+                             a.get('href','').count('/') >= 3]
         log.info(f'[Me Stores] found {len(anchors)} anchors p{page}')
         if not anchors:
             body=soup.find('body'); log.warning(f'[Me Stores] snippet: {str(body)[:200] if body else ""}')
@@ -448,6 +458,7 @@ def parse_mestores(pt):
                 avail=detect_avail(a)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Me Stores] {e}')
+        log.info(f'[Me Stores] found {nf} valid p{page}')
         if nf==0: break
         page+=1
     log.info(f'[Me Stores] {pt}: {len(products)}'); return products
@@ -496,7 +507,7 @@ def parse_abdulwahed(pt):
 
 def parse_amazon(pt):
     base=URLS[pt]['amazon']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen=set(); seen_keys=set(); page=1
+    products=[]; seen=set(); page=1
     while page<=15:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Amazon SA] page {page}')
@@ -517,7 +528,7 @@ def parse_amazon(pt):
                 if not ne: continue
                 name=ne.get_text(strip=True)
                 if not name or len(name)<5: continue
-                # Must be Sony brand — check brand row or name
+                # Must be Sony brand
                 brand_el=item.select_one('.a-row.a-size-base.a-color-secondary span')
                 brand_text=(brand_el.get_text().lower() if brand_el else '')
                 item_text=item.get_text().lower()
@@ -547,17 +558,6 @@ def parse_amazon(pt):
                     if page==1 and nf<3: log.info(f'[Amazon SA] REJECTED: {name[:80]}')
                     continue
                 if not name.lower().startswith('sony'): name='Sony '+name
-                # Deduplicate by product key (focal length for lenses, model for cameras)
-                n=norm(name)
-                if pt=='lenses':
-                    fm=re.search(r'(\d+)(?:-(\d+))?\s*mm',n)
-                    ap=re.search(r'f/?(\d+\.?\d*)',n)
-                    key=f"{fm.group(0) if fm else ''}-{ap.group(1) if ap else ''}-{'renewed' if 'renewed' in n else 'new'}"
-                else:
-                    from_extract=re.findall(r'a[679]\d{3}|a\d+[rscv]?\s*\d*|zv-\w+|fx\d+|ilce-\w+|dsc-\w+',n)
-                    key='-'.join(sorted(from_extract)[:2]) if from_extract else ''
-                if key and key in seen_keys: continue
-                if key: seen_keys.add(key)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Amazon SA] {e}')
         nxt=soup.select_one('.s-pagination-next:not(.s-pagination-disabled)')
