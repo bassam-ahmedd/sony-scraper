@@ -63,6 +63,8 @@ NON_CAM = [
     'usb dock','dock','screen protector','carrying case',
     'condenser','cage','shooting grip','smallrig','tilta',
     'monitor','hdmi','softbox','diffuser','light stand',
+    # Specific excluded models (point-and-shoot, action cams etc)
+    'dsc-rx10','rx10','zv-1a',
 ]
 CAM_MODELS_RE = [
     r'\ba7\s*(r|s|c|cm)?\s*(ii+|iv|v|[2-9])?\b',
@@ -296,7 +298,9 @@ def parse_our_site(pt):
                 item_html=str(item).lower()
                 if ('out-of-stock' in item_html or 'out of stock' in item_html or
                     'notify' in item_html or 'sold-out' in item_html or
-                    'product-item-info-unavailable' in item_html):
+                    'product-item-info-unavailable' in item_html or
+                    'enquire now' in item_html or 'enquire-now' in item_html or
+                    'استفسر' in str(item)):
                     avail='Out of Stock'
                 elif item.select_one('[class*="tocart"],[class*="to-cart"],[title*="Cart"]'):
                     avail='In Stock'
@@ -435,7 +439,7 @@ def parse_abdulwahed(pt):
 
 def parse_amazon(pt):
     base=URLS[pt]['amazon']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen=set(); page=1
+    products=[]; seen=set(); seen_keys=set(); page=1
     while page<=15:
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[Amazon SA] page {page}')
@@ -456,6 +460,11 @@ def parse_amazon(pt):
                 if not ne: continue
                 name=ne.get_text(strip=True)
                 if not name or len(name)<5: continue
+                # Must be Sony brand — check brand row or name
+                brand_el=item.select_one('.a-row.a-size-base.a-color-secondary span')
+                brand_text=(brand_el.get_text().lower() if brand_el else '')
+                item_text=item.get_text().lower()
+                if 'sony' not in name.lower() and 'sony' not in brand_text: continue
                 pw=item.select_one('.a-price-whole'); pf=item.select_one('.a-price-fraction')
                 price=None
                 if pw:
@@ -463,11 +472,8 @@ def parse_amazon(pt):
                     ps+='.'+pf.get_text(strip=True) if pf else '.00'
                     try: price=float(ps)
                     except: pass
-                # Amazon: if no price shown, item is likely out of stock
                 avail='Out of Stock' if not price else 'In Stock'
-                # Check explicit unavailable text
-                it=item.get_text().lower()
-                if 'currently unavailable' in it or 'out of stock' in it:
+                if 'currently unavailable' in item_text or 'out of stock' in item_text:
                     avail='Out of Stock'
                 le=item.select_one('h2 a'); href=le.get('href','') if le else ''
                 if '/dp/' in href:
@@ -483,8 +489,18 @@ def parse_amazon(pt):
                 if not val(name):
                     if page==1 and nf<3: log.info(f'[Amazon SA] REJECTED: {name[:80]}')
                     continue
-                # Prepend Sony if missing
                 if not name.lower().startswith('sony'): name='Sony '+name
+                # Deduplicate by product key (focal length for lenses, model for cameras)
+                n=norm(name)
+                if pt=='lenses':
+                    fm=re.search(r'(\d+)(?:-(\d+))?\s*mm',n)
+                    ap=re.search(r'f/?(\d+\.?\d*)',n)
+                    key=f"{fm.group(0) if fm else ''}-{ap.group(1) if ap else ''}-{'renewed' if 'renewed' in n else 'new'}"
+                else:
+                    from_extract=re.findall(r'a[679]\d{3}|a\d+[rscv]?\s*\d*|zv-\w+|fx\d+|ilce-\w+|dsc-\w+',n)
+                    key='-'.join(sorted(from_extract)[:2]) if from_extract else ''
+                if key and key in seen_keys: continue
+                if key: seen_keys.add(key)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Amazon SA] {e}')
         nxt=soup.select_one('.s-pagination-next:not(.s-pagination-disabled)')
@@ -708,6 +724,9 @@ def cam_score(a,b):
         # Normalize roman numerals to digits
         n=re.sub(r'\biii\b','3',n); n=re.sub(r'\biv\b','4',n)
         n=re.sub(r'\bv\b(?!\w)','5',n); n=re.sub(r'\bii\b','2',n)
+        # Also handle when roman numerals are directly appended (a7v, a7iv, a7iii)
+        n=re.sub(r'\ba7v\b','a75',n); n=re.sub(r'\ba7iv\b','a74',n)
+        n=re.sub(r'\ba7iii\b','a73',n); n=re.sub(r'\ba7ii\b','a72',n)
         # "alpha NNN" → "aNNN"
         n=re.sub(r'\balpha\s+(\d)',r'a\1',n)
         # a7cm2/a7cii/a7c2 → a7c2
@@ -733,6 +752,8 @@ def cam_score(a,b):
         for m in re.finditer(r'\ba7([rsc])\s*(\d)\b',n): models.add(f'a7{m.group(1)}{m.group(2)}')
         # a7 + generation (a7 4, a7 5 etc — after roman numeral normalization)
         for m in re.finditer(r'\ba7\s+(\d)\b',n): models.add(f'a7{m.group(1)}')
+        # a7V, a7IV written without space (common abbreviation)
+        for m in re.finditer(r'\ba7([2-9])\b',n): models.add(f'a7{m.group(1)}')
         # bare a7 = wildcard matches any a7 generation
         if re.search(r'\ba7\b(?!\s*[rscm\d])',n): models.add('a7')
         # a9 models
@@ -759,14 +780,34 @@ def cam_score(a,b):
     if not ma or not mb:
         return min(70,len(set(na.split())&set(nb.split()))*15)
     if not models_match(ma,mb): return 0
-    # Model matched — add variant bonuses for better greedy assignment
+
+    # Extract kit lens from name (e.g. "with 28-60mm", "with 16-50mm", "18-135mm lens")
+    def kit_lens(n):
+        m=re.search(r'(?:with\s+)?(\d+(?:-\d+)?mm)(?:\s+[fF]/?\d+)?.*(?:lens|kit)',n)
+        if m: return m.group(1)
+        m=re.search(r'(\d+(?:-\d+)?mm)',n)
+        if m and any(x in n for x in ['with lens','kit',' kit']):
+            return m.group(1)
+        return None
+
+    a_kit_lens=kit_lens(na); b_kit_lens=kit_lens(nb)
+    a_body=any(x in na for x in ['body only','body-only','(body only)','body ('])
+    b_body=any(x in nb for x in ['body only','body-only','(body only)','body ('])
+    a_has_kit=bool(a_kit_lens)
+    b_has_kit=bool(b_kit_lens)
+
+    # HARD RULE: if one is clearly body-only and other is clearly kit, no match
+    if a_body and b_has_kit: return 0
+    if b_body and a_has_kit: return 0
+
+    # HARD RULE: kit lenses must match (28-60mm kit ≠ 16-50mm kit ≠ 18-135mm kit)
+    if a_kit_lens and b_kit_lens and a_kit_lens!=b_kit_lens: return 0
+
+    # Base score: model matches
     score=100
-    a_kit=any(x in na for x in ['28-60','28-70','16-50','18-135','with lens','kit'])
-    b_kit=any(x in nb for x in ['28-60','28-70','16-50','18-135','with lens','kit'])
-    a_body=any(x in na for x in ['body only','body-only','body (','(body)'])
-    b_body=any(x in nb for x in ['body only','body-only','body (','(body)'])
-    if (a_kit and b_kit) or (a_body and b_body): score+=20
-    elif (a_kit and b_body) or (a_body and b_kit): score-=10
+    # Bonus: same type
+    if (a_has_kit and b_has_kit) or (a_body and b_body): score+=20
+    # Color bonus
     for color in ['black','silver','white','blue','green']:
         if color in na and color in nb: score+=5; break
     return score
@@ -946,7 +987,7 @@ def write_sheet(client,pt,rows):
         'gridProperties':{'columnCount':70}},'fields':'gridProperties.columnCount'}}]})
     ws.clear()
     data=[GH,CH]+[row2list(r) for r in rows]
-    ws.update(values=data,range_name='A1',value_input_option='RAW')
+    ws.update(values=data,range_name='A1',value_input_option='USER_ENTERED')
     color_cells(ws,rows,sh)
     log.info(f'Written {len(rows)} rows to [{tn}]')
     try: ws2=sh.worksheet(sn)
