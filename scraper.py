@@ -30,7 +30,8 @@ URLS = {
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
     'cameras': {
-        'our_site':   'https://ksa.amt.tv/camcorders-digital-cameras/photography/digital-camera.html?product_brand=1',
+        'our_site':   ['https://ksa.amt.tv/camcorders-digital-cameras/photography/digital-camera.html?product_brand=1',
+                       'https://ksa.amt.tv/camcorders-digital-cameras/video/digital-cinematography-cameras.html?product_brand=1'],
         'qomra':      'https://qomra.pro/en/category/jKQvBD?filters[category_id]=1061595081&filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
@@ -75,6 +76,7 @@ CAM_MODELS_RE = [
     r'\bzv-[a-z0-9]+',
     r'\bzv1[a-z]?\b',
     r'\bfx[23679][a0]?\b',
+    r'\bfx9\b',r'\bpxw-fx\w+',  # Cinema Line: FX9, PXW-FX9
     r'\bilce-[\w-]+',
     r'\bilme-[\w-]+',
     r'\bdsc-[\w-]+',
@@ -314,51 +316,59 @@ def salla_parse(html, base_url, label, validator):
 # ── Site parsers ──────────────────────────────────────────────────────────────
 def parse_our_site(pt):
     base=URLS[pt]['our_site']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen=set(); page=1
-    while page<=20:
-        url=f"{base}&p={page}" if page>1 else base
-        log.info(f'[Our Site] page {page}')
-        html=zenrows_js(url,wait=8000)
-        if not html: break
-        soup=BeautifulSoup(html,'lxml')
-        items=soup.select('li.product-item,.product-item-info'); nf=0
-        for item in items:
-            try:
-                ne=item.select_one('.product-item-name a,.product-item-link')
-                le=item.select_one('a.product-item-link,.product-item-name a')
-                if not ne: continue
-                name=ne.get_text(strip=True)
-                link=le['href'] if le and le.get('href') else ''
-                if link in seen: continue
-                seen.add(link); name=fix_arabic(name,link,val)
-                if not val(name): continue
-                price=None
-                for sel in ['[data-price-type="finalPrice"] .price','.special-price .price','.price-box .price','.price']:
-                    pe=item.select_one(sel)
-                    if pe:
-                        price=pparse(pe.get_text(strip=True))
-                        if price: break
-                if len(products)==0:
-                    pe_raw=item.select_one('.price')
-                    log.info(f'[Our Site] first price raw: {pe_raw.get_text(strip=True) if pe_raw else "NOT FOUND"}')
-                # Availability: check Magento stock signals
-                item_html=str(item).lower()
-                if ('out-of-stock' in item_html or 'out of stock' in item_html or
-                    'notify' in item_html or 'sold-out' in item_html or
-                    'product-item-info-unavailable' in item_html or
-                    'enquire now' in item_html or 'enquire-now' in item_html or
-                    'استفسر' in str(item)):
-                    avail='Out of Stock'
-                elif item.select_one('[class*="tocart"],[class*="to-cart"],[title*="Cart"]'):
-                    avail='In Stock'
-                elif not price:
-                    avail='Out of Stock'
-                else:
-                    avail='In Stock'
-                products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
-            except Exception as e: log.debug(f'[Our Site] {e}')
-        if nf==0: break
-        page+=1
+    # Support single URL or list of URLs
+    urls_to_scrape=base if isinstance(base,list) else [base]
+    products=[]; seen=set()
+    for base_url in urls_to_scrape:
+        page=1
+        while page<=20:
+            url=f"{base_url}&p={page}" if page>1 else base_url
+            log.info(f'[Our Site] page {page} ({base_url.split("/")[-1][:30]})')
+            html=zenrows_js(url,wait=8000)
+            if not html: break
+            soup=BeautifulSoup(html,'lxml')
+            items=soup.select('li.product-item,.product-item-info'); nf=0
+            for item in items:
+                try:
+                    ne=item.select_one('.product-item-name a,.product-item-link')
+                    le=item.select_one('a.product-item-link,.product-item-name a')
+                    if not ne: continue
+                    name=ne.get_text(strip=True)
+                    link=le['href'] if le and le.get('href') else ''
+                    if link in seen: continue
+                    seen.add(link); name=fix_arabic(name,link,val)
+                    if not val(name): continue
+                    # Skip DISCONTINUED products
+                    item_html_lower=str(item).lower()
+                    if 'discontinued' in item_html_lower:
+                        log.info(f'[Our Site] SKIP DISCONTINUED: {name[:60]}')
+                        continue
+                    price=None
+                    for sel in ['[data-price-type="finalPrice"] .price','.special-price .price','.price-box .price','.price']:
+                        pe=item.select_one(sel)
+                        if pe:
+                            price=pparse(pe.get_text(strip=True))
+                            if price: break
+                    if len(products)==0:
+                        pe_raw=item.select_one('.price')
+                        log.info(f'[Our Site] first price raw: {pe_raw.get_text(strip=True) if pe_raw else "NOT FOUND"}')
+                    # Availability: check Magento stock signals
+                    if ('out-of-stock' in item_html_lower or 'out of stock' in item_html_lower or
+                        'notify' in item_html_lower or 'sold-out' in item_html_lower or
+                        'product-item-info-unavailable' in item_html_lower or
+                        'enquire now' in item_html_lower or 'enquire-now' in item_html_lower or
+                        'استفسر' in str(item)):
+                        avail='Out of Stock'
+                    elif item.select_one('[class*="tocart"],[class*="to-cart"],[title*="Cart"]'):
+                        avail='In Stock'
+                    elif not price:
+                        avail='Out of Stock'
+                    else:
+                        avail='In Stock'
+                    products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
+                except Exception as e: log.debug(f'[Our Site] {e}')
+            if nf==0: break
+            page+=1
     log.info(f'[Our Site] {pt}: {len(products)}'); return products
 
 def parse_qomra(pt):
@@ -822,8 +832,10 @@ def cam_score(a,b):
         for m in re.finditer(r'\bzv-[a-z]\w+\b',n):
             mv=m.group(0)
             if 'gen' not in mv: models.add(mv)  # other ZV models like zv-e1
-        # FX models
+        # FX models (cinema line)
         for m in re.finditer(r'\bfx[23679][a0]?\b',n): models.add(m.group(0))
+        for m in re.finditer(r'\bfx9\b',n): models.add('fx9')
+        for m in re.finditer(r'\bpxw-\w+',n): models.add(m.group(0))
         # ILCE / ILME
         for m in re.finditer(r'\bilce-[\w-]+',n): models.add(m.group(0))
         for m in re.finditer(r'\bilme-[\w-]+',n): models.add(m.group(0))
