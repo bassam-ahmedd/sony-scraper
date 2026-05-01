@@ -695,6 +695,12 @@ def lens_score(a,b):
         if s in na and s in nb: sc+=15
     return sc
 
+def models_match(ma,mb):
+    if ma&mb: return True
+    if 'a7' in ma and any(m.startswith('a7') for m in mb): return True
+    if 'a7' in mb and any(m.startswith('a7') for m in ma): return True
+    return False
+
 def cam_score(a,b):
     na,nb=norm(a),norm(b)
 
@@ -748,15 +754,18 @@ def cam_score(a,b):
     ma=extract_models(na); mb=extract_models(nb)
     if not ma or not mb:
         return min(70,len(set(na.split())&set(nb.split()))*15)
-
-    def models_match(ma,mb):
-        if ma&mb: return True
-        # bare "a7" matches any a7 generation
-        if 'a7' in ma and any(m.startswith('a7') for m in mb): return True
-        if 'a7' in mb and any(m.startswith('a7') for m in ma): return True
-        return False
-
-    return 100 if models_match(ma,mb) else 0
+    if not models_match(ma,mb): return 0
+    # Model matched — add variant bonuses for better greedy assignment
+    score=100
+    a_kit=any(x in na for x in ['28-60','28-70','16-50','18-135','with lens','kit'])
+    b_kit=any(x in nb for x in ['28-60','28-70','16-50','18-135','with lens','kit'])
+    a_body=any(x in na for x in ['body only','body-only','body (','(body)'])
+    b_body=any(x in nb for x in ['body only','body-only','body (','(body)'])
+    if (a_kit and b_kit) or (a_body and b_body): score+=20
+    elif (a_kit and b_body) or (a_body and b_kit): score-=10
+    for color in ['black','silver','white','blue','green']:
+        if color in na and color in nb: score+=5; break
+    return score
 
 def find_match(our,comps,pt):
     sc=lens_score if pt=='lenses' else cam_score
@@ -768,15 +777,42 @@ def find_match(our,comps,pt):
 
 # ── Build rows ────────────────────────────────────────────────────────────────
 def build_rows(our,comp_data,pt):
-    rows=[]; ts=datetime.now().strftime('%Y-%m-%d %H:%M'); used={s:set() for s in COMPETITORS}
+    rows=[]; ts=datetime.now().strftime('%Y-%m-%d %H:%M')
+    sc=lens_score if pt=='lenses' else cam_score
+
+    # Pre-compute best match for each (our_product, competitor_source) pair
+    # Use greedy assignment: sort by score descending, assign best available
+    assignments={src:{} for src in COMPETITORS}  # src → {our_url: comp_product}
+    used_comp={src:set() for src in COMPETITORS}  # src → set of used comp URLs
+
+    # Build score matrix for each source
+    for src in COMPETITORS:
+        comps=comp_data.get(src,[])
+        if not comps: continue
+        # Score all pairs
+        pairs=[]
+        for o in our:
+            for cp in comps:
+                s=sc(o['name'],cp['name'])
+                if s>=80:
+                    pairs.append((s,o['url'],cp['url'],o,cp))
+        # Sort by score desc, then assign greedily
+        pairs.sort(key=lambda x:-x[0])
+        assigned_our=set(); assigned_comp=set()
+        for s,our_url,comp_url,o,cp in pairs:
+            if our_url in assigned_our or comp_url in assigned_comp: continue
+            assignments[src][our_url]=cp
+            assigned_our.add(our_url); assigned_comp.add(comp_url)
+            used_comp[src].add(comp_url)
+
+    # Build rows for our products
     for o in our:
         row={'timestamp':ts,'name':o['name'],'our_price':o['price'],
              'our_availability':o['availability'],'our_url':o['url']}
         pfl=[(OUR_SITE,o['price'],o['url'])] if o['price'] and o['availability']=='In Stock' else []
         for src in COMPETITORS:
-            m=find_match(o,comp_data.get(src,[]),pt)
+            m=assignments[src].get(o['url'])
             if m:
-                used[src].add(m['url'])
                 diff=round(m['price']-o['price'],2) if m['price'] and o['price'] else None
                 st=('Cheaper than competitor' if diff and diff>0 else
                     'More expensive' if diff and diff<0 else
@@ -792,9 +828,11 @@ def build_rows(our,comp_data,pt):
             row['lowest_price']=row['cheapest_brand']=row['cheapest_link']=None
             row['our_diff_vs_cheapest']=None
         rows.append(row)
+
+    # Add unmatched competitor products as extra rows
     for src in COMPETITORS:
         for cp in comp_data.get(src,[]):
-            if cp['url'] in used[src]: continue
+            if cp['url'] in used_comp[src]: continue
             row={'timestamp':ts,'name':cp['name'],'our_price':None,'our_availability':'Not listed','our_url':''}
             for ot in COMPETITORS:
                 if ot==src: row[ot]={'url':cp['url'],'price':cp['price'],'availability':cp['availability'],'diff':None,'status':'Not listed'}
