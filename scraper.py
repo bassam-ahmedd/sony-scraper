@@ -784,8 +784,8 @@ def cam_score(a,b):
         # Also handle when roman numerals are directly appended (a7v, a7iv, a7iii)
         n=re.sub(r'\ba7v\b','a75',n); n=re.sub(r'\ba7iv\b','a74',n)
         n=re.sub(r'\ba7iii\b','a73',n); n=re.sub(r'\ba7ii\b','a72',n)
-        # "alpha NNN" → "aNNN"
-        n=re.sub(r'\balpha\s+(\d)',r'a\1',n)
+        # "alpha a6400" → "a6400", "alpha 7" → "a7", handles both "alpha NNN" and "alpha aNNN"
+        n=re.sub(r'\balpha\s+a?(\d)',r'a\1',n)
         # a7cm2/a7cii/a7c2 → a7c2
         n=re.sub(r'\ba7c\s*m?(\d)\b',r'a7c\1',n)
         n=re.sub(r'\ba7c\b(?!\d)','a7c1',n)
@@ -865,21 +865,34 @@ def cam_score(a,b):
     b_body=any(x in nb for x in ['body only','body-only','(body only)','body ('])
     a_has_kit=bool(a_kit_lens)
     b_has_kit=bool(b_kit_lens)
+    # "bare" name = no body/kit info at all (just model name, no lens or body-only)
+    a_bare=not a_has_kit and not a_body
+    b_bare=not b_has_kit and not b_body
 
-    # HARD RULE: if one is clearly body-only and other is clearly kit, no match
+    # HARD RULE: body-only vs kit = no match
     if a_body and b_has_kit: return 0
     if b_body and a_has_kit: return 0
 
-    # HARD RULE: kit lenses must match (28-60mm kit ≠ 16-50mm kit ≠ 18-135mm kit)
+    # HARD RULE: different kit lenses = no match (18-135mm ≠ 16-50mm)
     if a_kit_lens and b_kit_lens and a_kit_lens!=b_kit_lens: return 0
 
-    # Base score: model matches
+    # Base score
     score=100
-    # Bonus: same type
+    # Bonus: exact same type (both same kit lens, or both body-only)
     if (a_has_kit and b_has_kit) or (a_body and b_body): score+=20
     # Color bonus
     for color in ['black','silver','white','blue','green']:
         if color in na and color in nb: score+=5; break
+
+    # Lower score when one side is "bare" (no body/kit info) — so greedy assignment
+    # always prefers specific-vs-specific matches over bare-vs-specific matches.
+    # e.g. "a6400 with 16-50mm" vs "a6400 with 16-50mm" = 120 (wins first)
+    # then "a6400 bare" vs "a6400 body only" = 90 (gets the remaining product)
+    if a_bare and b_has_kit: score=min(score,85)
+    if b_bare and a_has_kit: score=min(score,85)
+    if a_bare and b_body: score=min(score,90)
+    if b_bare and a_body: score=min(score,90)
+
     return score
 
 def find_match(our,comps,pt):
