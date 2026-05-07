@@ -703,9 +703,14 @@ def parse_cameramix(pt):
         html=zenrows_std(url)
         if not html: break
         results=opencart_parse(html,'https://www.cameramix.com','CameraMix',val)
+        if not results and page==1:
+            log.info('[CameraMix] 0 items p1, retrying with JS render')
+            html=zenrows_js(url,wait=8000)
+            if html: results=opencart_parse(html,'https://www.cameramix.com','CameraMix',val)
         new=[p for p in results if p['url'] not in seen]
         for p in new: seen.add(p['url'])
         products.extend(new)
+        if not html: break
         soup=BeautifulSoup(html,'lxml')
         nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
         if not nxt or not new: break
