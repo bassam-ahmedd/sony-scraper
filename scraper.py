@@ -441,13 +441,13 @@ def parse_mestores(pt):
         if not anchors:
             body=soup.find('body'); log.warning(f'[Me Stores] snippet: {str(body)[:200] if body else ""}')
             break
-        nf=0; nrej=0
+        nf=0; nrej=0; nskip=0
         for a in anchors:
             try:
                 link=a.get('href','').strip()
                 if not link.startswith('http'): link='https://mestores.com'+link
                 if link in ('https://mestores.com','https://mestores.com/en_sa'): continue
-                if link in seen: continue
+                if link in seen: nskip+=1; continue
                 seen.add(link)
                 name=''; bl=0
                 for img in a.select('img[alt]'):
@@ -458,7 +458,6 @@ def parse_mestores(pt):
                     tip=a.select_one('[class*="tooltipText"]')
                     if tip: name=tip.get_text(strip=True)
                 if not name:
-                    # Try any text content in the anchor that looks like a product name
                     for el in a.select('p,span,div'):
                         t=el.get_text(strip=True)
                         if len(t)>15 and 'sony' in t.lower():
@@ -469,7 +468,7 @@ def parse_mestores(pt):
                 name=fix_arabic(name,link,val)
                 if not val(name):
                     nrej+=1
-                    if nrej<=2: log.info(f'[Me Stores] REJECTED: {name[:60]}')
+                    if nrej<=3: log.info(f'[Me Stores] REJECTED: {name[:60]}')
                     continue
                 pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
                 price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
@@ -480,8 +479,10 @@ def parse_mestores(pt):
                 avail=detect_avail(a)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Me Stores] {e}')
-        log.info(f'[Me Stores] found {nf} valid p{page} ({nrej} rejected)')
-        if nf==0: break
+        log.info(f'[Me Stores] p{page}: {nf} valid, {nrej} rejected, {nskip} already seen')
+        # Stop if all items were already seen (page returned duplicates) or no anchors
+        if nskip==len(anchors) or (nf==0 and nrej==0 and nskip>0): break
+        if nf==0 and nrej==0 and page>=2: break
         page+=1
     log.info(f'[Me Stores] {pt}: {len(products)}'); return products
 
@@ -505,13 +506,16 @@ def parse_abdulwahed(pt):
                 ie=card.select_one('img[alt]')
                 if not ie: continue
                 name=ie.get('alt','').strip()
-                if not name or 'sony' not in norm(name): continue
+                if not name or len(name)<5: continue
                 le=card.select_one('a[href]')
                 if not le: continue
                 link=le.get('href','').strip()
                 if not link.startswith('http'): link='https://www.abdulwahed.com'+link
                 if link in seen: continue
-                seen.add(link); name=fix_arabic(name,link,val)
+                seen.add(link)
+                # Check Sony brand in name OR URL slug (handles "sony" appearing in product URL)
+                if 'sony' not in norm(name) and 'sony' not in link.lower(): continue
+                name=fix_arabic(name,link,val)
                 if not val(name): continue
                 price=None
                 for el in card.select('span,div,p'):
@@ -668,7 +672,7 @@ def parse_cameramix(pt):
 def parse_pclub(pt):
     base=URLS[pt]['pclub']; val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set(); page=1
-    while page<=10:
+    while page<=5:  # PClub has ~2 pages with limit=100
         url=f"{base}&page={page}" if page>1 else base
         log.info(f'[PClub] page {page}')
         html=zenrows_js(url,wait=8000)
@@ -677,9 +681,8 @@ def parse_pclub(pt):
         new=[p for p in results if p['url'] not in seen]
         for p in new: seen.add(p['url'])
         products.extend(new)
-        soup=BeautifulSoup(html,'lxml')
-        nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
-        if not nxt or not new: break
+        log.info(f'[PClub] p{page}: {len(new)} new (total {len(products)})')
+        if not new: break  # Stop when no new products found
         page+=1; time.sleep(1.5)
     log.info(f'[PClub] {pt}: {len(products)}'); return products
 
