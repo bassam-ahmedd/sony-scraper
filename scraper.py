@@ -552,7 +552,9 @@ def parse_abdulwahed(pt):
                 has_sony = ('sony' in name_lower or 'sony' in link.lower() or
                             any(s in name_lower for s in SONY_IDENTIFIERS))
                 if not has_sony:
-                    nrej_nosony+=1; continue
+                    nrej_nosony+=1
+                    if nrej_nosony<=5: log.info(f'[Abdulwahed] NO-SONY: "{name[:60]}" | url: {link[-50:]}')
+                    continue
                 name=fix_arabic(name,link,val)
                 if not val(name):
                     nrej_val+=1
