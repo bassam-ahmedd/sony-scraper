@@ -316,7 +316,6 @@ def salla_parse(html, base_url, label, validator):
 # ── Site parsers ──────────────────────────────────────────────────────────────
 def parse_our_site(pt):
     base=URLS[pt]['our_site']; val=is_lens if pt=='lenses' else is_camera
-    # Support single URL or list of URLs
     urls_to_scrape=base if isinstance(base,list) else [base]
     products=[]; seen=set()
     for base_url in urls_to_scrape:
@@ -325,9 +324,18 @@ def parse_our_site(pt):
             url=f"{base_url}&p={page}" if page>1 else base_url
             log.info(f'[Our Site] page {page} ({base_url.split("/")[-1][:30]})')
             html=zenrows_js(url,wait=8000)
+            if not html:
+                log.warning(f'[Our Site] no HTML p{page}, retrying with wait=15000')
+                html=zenrows_js(url,wait=15000)
             if not html: break
             soup=BeautifulSoup(html,'lxml')
-            items=soup.select('li.product-item,.product-item-info'); nf=0
+            items=soup.select('li.product-item,.product-item-info')
+            if not items:
+                # Try broader selector
+                items=soup.select('[class*="product-item"]')
+            log.info(f'[Our Site] found {len(items)} items p{page}')
+            if not items: break
+            nf=0; rejected=0
             for item in items:
                 try:
                     ne=item.select_one('.product-item-name a,.product-item-link')
@@ -337,7 +345,10 @@ def parse_our_site(pt):
                     link=le['href'] if le and le.get('href') else ''
                     if link in seen: continue
                     seen.add(link); name=fix_arabic(name,link,val)
-                    if not val(name): continue
+                    if not val(name):
+                        rejected+=1
+                        if rejected<=3: log.info(f'[Our Site] REJECTED: {name[:60]}')
+                        continue
                     # Skip DISCONTINUED products
                     item_html_lower=str(item).lower()
                     if 'discontinued' in item_html_lower:
@@ -352,7 +363,7 @@ def parse_our_site(pt):
                     if len(products)==0:
                         pe_raw=item.select_one('.price')
                         log.info(f'[Our Site] first price raw: {pe_raw.get_text(strip=True) if pe_raw else "NOT FOUND"}')
-                    # Availability: check Magento stock signals
+                    # Availability
                     if ('out-of-stock' in item_html_lower or 'out of stock' in item_html_lower or
                         'notify' in item_html_lower or 'sold-out' in item_html_lower or
                         'product-item-info-unavailable' in item_html_lower or
@@ -367,7 +378,9 @@ def parse_our_site(pt):
                         avail='In Stock'
                     products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
                 except Exception as e: log.debug(f'[Our Site] {e}')
-            if nf==0: break
+            log.info(f'[Our Site] p{page}: {nf} valid, {rejected} rejected')
+            if nf==0 and len(items)==0: break  # Only break if no items at all
+            if nf==0 and page>1: break  # Break if we got items but none valid on subsequent pages
             page+=1
     log.info(f'[Our Site] {pt}: {len(products)}'); return products
 
@@ -428,7 +441,7 @@ def parse_mestores(pt):
         if not anchors:
             body=soup.find('body'); log.warning(f'[Me Stores] snippet: {str(body)[:200] if body else ""}')
             break
-        nf=0
+        nf=0; nrej=0
         for a in anchors:
             try:
                 link=a.get('href','').strip()
@@ -445,10 +458,19 @@ def parse_mestores(pt):
                     tip=a.select_one('[class*="tooltipText"]')
                     if tip: name=tip.get_text(strip=True)
                 if not name:
+                    # Try any text content in the anchor that looks like a product name
+                    for el in a.select('p,span,div'):
+                        t=el.get_text(strip=True)
+                        if len(t)>15 and 'sony' in t.lower():
+                            name=t; break
+                if not name:
                     slug=link.rstrip('/').split('/')[-1].split('?')[0]
                     name=slug_to_name(slug)
                 name=fix_arabic(name,link,val)
-                if not val(name): continue
+                if not val(name):
+                    nrej+=1
+                    if nrej<=2: log.info(f'[Me Stores] REJECTED: {name[:60]}')
+                    continue
                 pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
                 price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
                 if not price:
@@ -458,7 +480,7 @@ def parse_mestores(pt):
                 avail=detect_avail(a)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Me Stores] {e}')
-        log.info(f'[Me Stores] found {nf} valid p{page}')
+        log.info(f'[Me Stores] found {nf} valid p{page} ({nrej} rejected)')
         if nf==0: break
         page+=1
     log.info(f'[Me Stores] {pt}: {len(products)}'); return products
@@ -528,11 +550,12 @@ def parse_amazon(pt):
                 if not ne: continue
                 name=ne.get_text(strip=True)
                 if not name or len(name)<5: continue
-                # Must be Sony brand
+                # Must be Sony brand — check name, brand row, or full item text
                 brand_el=item.select_one('.a-row.a-size-base.a-color-secondary span')
                 brand_text=(brand_el.get_text().lower() if brand_el else '')
                 item_text=item.get_text().lower()
-                if 'sony' not in name.lower() and 'sony' not in brand_text: continue
+                if 'sony' not in name.lower() and 'sony' not in brand_text and 'sony' not in item_text[:200]:
+                    continue
                 pw=item.select_one('.a-price-whole'); pf=item.select_one('.a-price-fraction')
                 price=None
                 if pw:
