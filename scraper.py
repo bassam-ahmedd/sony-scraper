@@ -64,8 +64,8 @@ NON_CAM = [
     'usb dock','dock','screen protector','carrying case',
     'condenser','cage','shooting grip','smallrig','tilta',
     'monitor','hdmi','softbox','diffuser','light stand',
-    # Specific excluded models (point-and-shoot, action cams etc)
-    'dsc-rx10','rx10','zv-1a',
+    # Specific excluded models
+    'dsc-rx10 iv','dsc-rx10iv','zv-1a',
 ]
 CAM_MODELS_RE = [
     r'\ba7\s*(r|s|c|cm)?\s*(ii+|iv|v|[2-9])?\b',
@@ -76,13 +76,16 @@ CAM_MODELS_RE = [
     r'\bzv-[a-z0-9]+',
     r'\bzv1[a-z]?\b',
     r'\bfx[23679][a0]?\b',
-    r'\bfx9\b',r'\bpxw-fx\w+',  # Cinema Line: FX9, PXW-FX9
+    r'\bfx9\b',r'\bpxw-fx\w+',
+    r'\bdsc-rx[0-9]',          # DSC-RX100, DSC-RX10 etc
+    r'\brx[0-9]{3}',           # RX100 series
     r'\bilce-[\w-]+',
     r'\bilme-[\w-]+',
     r'\bdsc-[\w-]+',
     r'\brx[0-9]',
     r'\balpha\s+1\b',
     r'\balpha\s+a?\d',
+    r'\bvenice\b',             # Sony VENICE cinema camera
 ]
 CAM_TYPES = [
     'mirrorless camera','mirrorless digital camera','digital camera',
@@ -212,7 +215,7 @@ def zenrows_js(url, wait=10000, scroll=False, retries=2):
             {'scroll_y':5000},{'wait':2000}])
     for a in range(retries+1):
         try:
-            r=requests.get('https://api.zenrows.com/v1/',params=p,timeout=120)
+            r=requests.get('https://api.zenrows.com/v1/',params=p,timeout=90)
             r.raise_for_status(); return r.text
         except Exception as e:
             log.warning(f'ZenRows JS attempt {a+1}: {e}')
@@ -223,7 +226,7 @@ def zenrows_std(url, retries=2):
     p={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true','proxy_country':'sa'}
     for a in range(retries+1):
         try:
-            r=requests.get('https://api.zenrows.com/v1/',params=p,timeout=90)
+            r=requests.get('https://api.zenrows.com/v1/',params=p,timeout=60)
             r.raise_for_status(); return r.text
         except Exception as e:
             log.warning(f'ZenRows std attempt {a+1}: {e}')
@@ -671,19 +674,14 @@ def parse_cameramix(pt):
 
 def parse_pclub(pt):
     base=URLS[pt]['pclub']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen=set(); page=1
-    while page<=5:  # PClub has ~2 pages with limit=100
-        url=f"{base}&page={page}" if page>1 else base
-        log.info(f'[PClub] page {page}')
-        html=zenrows_js(url,wait=8000)
-        if not html: break
+    products=[]; seen=set()
+    log.info(f'[PClub] page 1')
+    html=zenrows_js(base,wait=8000)
+    if html:
         results=opencart_parse(html,'https://pclub.com.sa','PClub',val)
-        new=[p for p in results if p['url'] not in seen]
-        for p in new: seen.add(p['url'])
-        products.extend(new)
-        log.info(f'[PClub] p{page}: {len(new)} new (total {len(products)})')
-        if not new: break  # Stop when no new products found
-        page+=1; time.sleep(1.5)
+        for p in results:
+            if p['url'] not in seen:
+                seen.add(p['url']); products.append(p)
     log.info(f'[PClub] {pt}: {len(products)}'); return products
 
 def parse_camtime(pt):
@@ -1131,15 +1129,28 @@ def safe(key,label,pt):
     except Exception as e: log.error(f'[{label}] FAILED: {e}'); return []
 
 def main():
+    import time as _time
+    START_TIME = _time.time()
+    MAX_SECONDS = 18000  # 5 hours max total scraping time
+
+    def elapsed(): return _time.time() - START_TIME
+    def time_ok(): return elapsed() < MAX_SECONDS
+
     log.info('=== Sony Price Comparison Scraper Started ===')
     client=get_client()
     for pt in ['lenses','cameras']:
         log.info(f'\n─── Scraping {pt.upper()} ───')
         our=safe('our_site','Our Site',pt)
-        cd={label:safe(key,label,pt) for label,key in COMP_KEYS.items()}
+        cd={}
+        for label,key in COMP_KEYS.items():
+            if not time_ok():
+                log.warning(f'Time limit reached, skipping {label}')
+                cd[label]=[]
+                continue
+            cd[label]=safe(key,label,pt)
         rows=build_rows(our,cd,pt)
         write_sheet(client,pt,rows)
-        log.info(f'[{pt}] Done — {len(rows)} rows')
+        log.info(f'[{pt}] Done — {len(rows)} rows | elapsed {elapsed():.0f}s')
     log.info('=== Scraper Finished ===')
 
 if __name__=='__main__':
