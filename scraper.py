@@ -99,7 +99,10 @@ LENS_ID = [' lens','g master','gm ','zeiss','vario-tessar',
            'fe pz ','e pz ',' oss','macro g','macro gm',
            'sel','dn ','dg ','dc ','hsm']
 
-def norm(s): return s.lower().strip()
+def norm(s):
+    # Normalize Greek alpha α → a for Sony model matching (α7 → a7)
+    s = s.replace('α','a').replace('Α','A')
+    return s.lower().strip()
 
 def tr_east(s):
     for i,c in enumerate('٠١٢٣٤٥٦٧٨٩'): s=s.replace(c,str(i))
@@ -109,6 +112,10 @@ def is_lens(name):
     n=norm(name)
     if any(k in n for k in NON_LENS): return False
     if re.search(r'\b(mirrorless camera|mirrorless digital camera|digital camera|vlog camera|cinema camera|camera body)\b',n): return False
+    # Reject if name is primarily a camera (has camera model + camera-type word)
+    has_cam_model=any(re.search(p,n) for p in CAM_MODELS_RE)
+    has_cam_word=bool(re.search(r'\b(mirrorless|cinema|vlog|digital|camera|camcorder)\b',n))
+    if has_cam_model and has_cam_word: return False
     if not re.search(r'\d+\s*mm',n): return False
     has_aperture=bool(re.search(r'\bf/?[\s]?\d+\.?\d*',n))
     has_id=any(k in n for k in LENS_ID)
@@ -337,8 +344,15 @@ def parse_our_site(pt):
             soup=BeautifulSoup(html,'lxml')
             items=soup.select('li.product-item,.product-item-info')
             if not items:
-                # Try broader selector
                 items=soup.select('[class*="product-item"]')
+            # If page 1 returns 0 items, retry once with longer wait
+            if not items and page==1:
+                log.warning(f'[Our Site] 0 items on p1, retrying with wait=20000')
+                html=zenrows_js(url,wait=20000)
+                if html:
+                    soup=BeautifulSoup(html,'lxml')
+                    items=soup.select('li.product-item,.product-item-info')
+                    if not items: items=soup.select('[class*="product-item"]')
             log.info(f'[Our Site] found {len(items)} items p{page}')
             if not items: break
             nf=0; rejected=0
@@ -519,7 +533,10 @@ def parse_abdulwahed(pt):
                 if not link.startswith('http'): link='https://www.abdulwahed.com'+link
                 if link in seen: continue
                 seen.add(link)
-                # Check Sony brand in name OR URL (Sony products have /product/sony- in URL)
+                # For bundle names like "Camera + Lens", use only the camera part
+                if ' + ' in name:
+                    name = name.split(' + ')[0].strip()
+                # Check Sony brand in name OR URL
                 if 'sony' not in norm(name) and 'sony' not in link.lower():
                     nrej_nosony+=1; continue
                 name=fix_arabic(name,link,val)
