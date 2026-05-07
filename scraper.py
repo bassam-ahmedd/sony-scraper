@@ -65,7 +65,7 @@ NON_CAM = [
     'condenser','cage','shooting grip','smallrig','tilta',
     'monitor','hdmi','softbox','diffuser','light stand',
     # Specific excluded models
-    'dsc-rx10 iv','dsc-rx10iv','zv-1a',
+    'zv-1a',
 ]
 CAM_MODELS_RE = [
     r'\ba7\s*(r|s|c|cm)?\s*(ii+|iv|v|[2-9])?\b',
@@ -76,16 +76,19 @@ CAM_MODELS_RE = [
     r'\bzv-[a-z0-9]+',
     r'\bzv1[a-z]?\b',
     r'\bfx[23679][a0]?\b',
-    r'\bfx9\b',r'\bpxw-fx\w+',
-    r'\bdsc-rx[0-9]',          # DSC-RX100, DSC-RX10 etc
-    r'\brx[0-9]{3}',           # RX100 series
+    r'\bfx9\b',
+    r'\bpxw-\w+',          # PXW-FX9, PXW-FS7 etc
+    r'\bdsc-rx[0-9]',      # DSC-RX100, DSC-RX10 etc
+    r'\brx[0-9]{3}',       # RX100 series
     r'\bilce-[\w-]+',
     r'\bilme-[\w-]+',
     r'\bdsc-[\w-]+',
     r'\brx[0-9]',
     r'\balpha\s+1\b',
     r'\balpha\s+a?\d',
-    r'\bvenice\b',             # Sony VENICE cinema camera
+    r'\bvenice\b',          # Sony VENICE
+    r'\bburano\b',          # Sony BURANO 8K
+    r'\bfs[57]\b',          # FS5, FS7
 ]
 CAM_TYPES = [
     'mirrorless camera','mirrorless digital camera','digital camera',
@@ -503,7 +506,7 @@ def parse_abdulwahed(pt):
             cards=[d for d in soup.select('div') if d.select_one('img[alt]') and re.search(r'\d{3,}',d.get_text()) and d.select_one('a[href]')]
         log.info(f'[Abdulwahed] found {len(cards)} cards p{page}')
         if not cards: break
-        nf=0
+        nf=0; nrej_nosony=0; nrej_val=0
         for card in cards:
             try:
                 ie=card.select_one('img[alt]')
@@ -516,10 +519,14 @@ def parse_abdulwahed(pt):
                 if not link.startswith('http'): link='https://www.abdulwahed.com'+link
                 if link in seen: continue
                 seen.add(link)
-                # Check Sony brand in name OR URL slug (handles "sony" appearing in product URL)
-                if 'sony' not in norm(name) and 'sony' not in link.lower(): continue
+                # Check Sony brand in name OR URL (Sony products have /product/sony- in URL)
+                if 'sony' not in norm(name) and 'sony' not in link.lower():
+                    nrej_nosony+=1; continue
                 name=fix_arabic(name,link,val)
-                if not val(name): continue
+                if not val(name):
+                    nrej_val+=1
+                    if nrej_val<=3: log.info(f'[Abdulwahed] REJECTED by val: {name[:60]}')
+                    continue
                 price=None
                 for el in card.select('span,div,p'):
                     p=pparse(tr_east(el.get_text(strip=True)))
@@ -527,7 +534,7 @@ def parse_abdulwahed(pt):
                 avail=detect_avail(card)
                 products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
             except Exception as e: log.debug(f'[Abdulwahed] {e}')
-        log.info(f'[Abdulwahed] p{page}: {nf} Sony products')
+        log.info(f'[Abdulwahed] p{page}: {nf} valid ({nrej_nosony} no-sony, {nrej_val} invalid)')
         if nf==0: consecutive_empty+=1
         else: consecutive_empty=0
         if consecutive_empty>=3: break
