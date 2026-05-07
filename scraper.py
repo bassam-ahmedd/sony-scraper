@@ -23,17 +23,15 @@ URLS = {
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
         'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
-        'cameramix':  'https://www.cameramix.com/Sony',
+        'cameramix':  'https://www.cameramix.com/Lenses/Sony-Lenses',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71772710825?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+fe+lens&limit=100',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
     'cameras': {
-        # Two confirmed URLs — dedup by URL handles any overlapping products
         'our_site':   ['https://ksa.amt.tv/camcorders-digital-cameras/photography/digital-camera.html?product_brand=1',
-                       'https://ksa.amt.tv/camcorders-digital-cameras/video/digital-cinematography-cameras.html?product_brand=1',
-                       'https://ksa.amt.tv/catalogsearch/result/index/?product_brand=1&q=sony%20camera'],
+                       'https://ksa.amt.tv/camcorders-digital-cameras/video/digital-cinematography-cameras.html?product_brand=1'],
         'qomra':      'https://qomra.pro/en/search?q=camera&filters[brand_id]=174800383',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
@@ -429,83 +427,60 @@ def parse_qomra(pt):
     log.info(f'[Qomra] {pt}: {len(products)}'); return products
 
 def parse_mestores(pt):
-    base=URLS[pt]['mestores']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen=set(); page=1
-    while page<=10:
-        url=base.format(page=page)
-        log.info(f'[Me Stores] page {page}')
-        html=zenrows_js(url,wait=15000)
-        if not html: break
-        soup=BeautifulSoup(html,'lxml')
-        # Try multiple anchor patterns — mestores uses different classes
-        anchors=soup.select('a[href*="/en_sa/"]')
-        # Filter to product links only (exclude category/filter links)
-        anchors=[a for a in anchors if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
-        if not anchors:
-            # Fallback: get all anchors with product-like URLs
-            anchors=[a for a in soup.select('a[href]')
-                     if '/en_sa/' in a.get('href','') and
-                     re.search(r'-\d{3,}', a.get('href','')) and
-                     a.get('href','').count('/') >= 3]
-        if not anchors:
-            log.info(f'[Me Stores] retrying p{page} with wait=20000')
-            html=zenrows_js(url,wait=20000)
-            if html:
-                soup=BeautifulSoup(html,'lxml')
-                anchors=soup.select('a[href*="/en_sa/"]')
-                anchors=[a for a in anchors if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
-                if not anchors:
-                    anchors=[a for a in soup.select('a[href]')
-                             if '/en_sa/' in a.get('href','') and
-                             re.search(r'-\d{3,}', a.get('href',''))and
-                             a.get('href','').count('/') >= 3]
-        log.info(f'[Me Stores] found {len(anchors)} anchors p{page}')
-        if not anchors:
-            body=soup.find('body'); log.warning(f'[Me Stores] snippet: {str(body)[:200] if body else ""}')
-            break
-        nf=0; nrej=0; nskip=0
-        for a in anchors:
-            try:
-                link=a.get('href','').strip()
-                if not link.startswith('http'): link='https://mestores.com'+link
-                if link in ('https://mestores.com','https://mestores.com/en_sa'): continue
-                if link in seen: nskip+=1; continue
-                seen.add(link)
-                name=''; bl=0
-                for img in a.select('img[alt]'):
-                    alt=img.get('alt','').strip()
-                    if alt.lower() in ('tabby','tamara','sar','') or len(alt)<10: continue
-                    if len(alt)>bl: name=alt; bl=len(alt)
-                if not name:
-                    tip=a.select_one('[class*="tooltipText"]')
-                    if tip: name=tip.get_text(strip=True)
-                if not name:
-                    for el in a.select('p,span,div'):
-                        t=el.get_text(strip=True)
-                        if len(t)>15 and 'sony' in t.lower():
-                            name=t; break
-                if not name:
-                    slug=link.rstrip('/').split('/')[-1].split('?')[0]
-                    name=slug_to_name(slug)
-                name=fix_arabic(name,link,val)
-                if not val(name):
-                    nrej+=1
-                    if nrej<=3: log.info(f'[Me Stores] REJECTED: {name[:60]}')
-                    continue
-                pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
-                price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
-                if not price:
-                    for el in a.select('span'):
-                        p=pparse(tr_east(el.get_text(strip=True)))
-                        if p and p>100: price=p; break
-                avail=detect_avail(a)
-                products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
-            except Exception as e: log.debug(f'[Me Stores] {e}')
-        log.info(f'[Me Stores] p{page}: {nf} valid, {nrej} rejected, {nskip} already seen')
-        # Stop if all items were already seen (page returned duplicates) or no anchors
-        if nskip==len(anchors) or (nf==0 and nrej==0 and nskip>0): break
-        if nf==0 and nrej==0 and page>=2: break
-        page+=1
+    base=URLS[pt]['mestores'].format(page=1); val=is_lens if pt=='lenses' else is_camera
+    products=[]; seen=set()
+    log.info(f'[Me Stores] page 1')
+    # Me Stores is a single-page infinite scroll store — load with JS scroll
+    html=zenrows_js(base,wait=15000,scroll=True)
+    if not html:
+        html=zenrows_js(base,wait=20000)
+    if not html:
+        log.info(f'[Me Stores] {pt}: 0'); return products
+    soup=BeautifulSoup(html,'lxml')
+    anchors=soup.select('a[href*="/en_sa/"]')
+    anchors=[a for a in anchors if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
+    if not anchors:
+        anchors=[a for a in soup.select('a[href]')
+                 if '/en_sa/' in a.get('href','') and
+                 re.search(r'-\d{3,}', a.get('href','')) and
+                 a.get('href','').count('/') >= 3]
+    log.info(f'[Me Stores] found {len(anchors)} anchors')
+    if not anchors:
+        body=soup.find('body'); log.warning(f'[Me Stores] snippet: {str(body)[:200] if body else ""}')
+        log.info(f'[Me Stores] {pt}: 0'); return products
+    nf=0; nrej=0
+    for a in anchors:
+        try:
+            link=a.get('href','').strip()
+            if not link.startswith('http'): link='https://mestores.com'+link
+            if link in ('https://mestores.com','https://mestores.com/en_sa'): continue
+            if link in seen: continue
+            seen.add(link)
+            name=''; bl=0
+            for img in a.select('img[alt]'):
+                alt=img.get('alt','').strip()
+                if alt.lower() in ('tabby','tamara','sar','') or len(alt)<10: continue
+                if len(alt)>bl: name=alt; bl=len(alt)
+            if not name:
+                for el in a.select('h1,h2,h3,h4,p,[class*="name"],[class*="title"]'):
+                    t=el.get_text(strip=True)
+                    if len(t)>10: name=t; break
+            if not name: continue
+            name=fix_arabic(name,link,val)
+            if not val(name):
+                nrej+=1
+                if nrej<=3: log.info(f'[Me Stores] REJECTED: {name[:60]}')
+                continue
+            pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
+            price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
+            if not price:
+                for el in a.select('span'):
+                    p=pparse(tr_east(el.get_text(strip=True)))
+                    if p and p>100: price=p; break
+            avail=detect_avail(a)
+            products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
+        except Exception as e: log.debug(f'[Me Stores] {e}')
+    log.info(f'[Me Stores] found {nf} valid, {nrej} rejected')
     log.info(f'[Me Stores] {pt}: {len(products)}'); return products
 
 def parse_abdulwahed(pt):
