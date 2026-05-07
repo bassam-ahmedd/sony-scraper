@@ -19,22 +19,24 @@ URLS = {
     'lenses': {
         'our_site':   'https://ksa.amt.tv/camera-accessories/photography/lenses.html?product_brand=1',
         'qomra':      'https://qomra.pro/en/category/sony-lenses?filters[brand_id]=174800383',
-        'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
-        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879?filter_manufacturer=Sony',
+        'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722&limit=100',
+        'abdulwahed': 'https://www.abdulwahed.com/en/searchresult?search_query=sony+lens&submit_search=',
         'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
-        'cameramix':  'https://www.cameramix.com/Sony',
+        'cameramix':  'https://www.cameramix.com/Sony/Lenses',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71772710825?fm=10',
-        'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A7',
+        'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+fe+lens&limit=100',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
     'cameras': {
         'our_site':   ['https://ksa.amt.tv/camcorders-digital-cameras/photography/digital-camera.html?product_brand=1',
-                       'https://ksa.amt.tv/camcorders-digital-cameras/video/digital-cinematography-cameras.html?product_brand=1'],
-        'qomra':      'https://qomra.pro/en/category/jKQvBD?filters[category_id]=1061595081&filters[brand_id]=174800383',
-        'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
-        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870?filter_manufacturer=Sony',
+                       'https://ksa.amt.tv/camcorders-digital-cameras/video/digital-cinematography-cameras.html?product_brand=1',
+                       'https://ksa.amt.tv/camcorders-digital-cameras/video/camcorders.html?product_brand=1',
+                       'https://ksa.amt.tv/camcorders-digital-cameras/video/video-cameras.html?product_brand=1'],
+        'qomra':      'https://qomra.pro/en/category/jKQvBD?filters[brand_id]=174800383',
+        'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722&limit=100',
+        'abdulwahed': 'https://www.abdulwahed.com/en/searchresult?search_query=sony+camera&submit_search=',
         'amazon':     'https://www.amazon.sa/s?k=sony+alpha+camera&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/digital-cameras-16168/?q=sony',
         'cameramix':  'https://www.cameramix.com/Sony',
@@ -788,6 +790,11 @@ def parse_alamcam(pt):
                 seen.add(link)
                 if logged<3: log.info(f'[AlamCam] candidate: {name[:80]}'); logged+=1
                 if 'sony' not in norm(name): continue
+                # For lenses: require Sony as brand, not just "for Sony E-Mount"
+                if pt=='lenses':
+                    n=norm(name)
+                    if not n.startswith('sony') and not any(s in n for s in ['sony fe','sony e ','sony g ','sony sel','vario-tessar']):
+                        continue
                 name=fix_arabic(name,link,val)
                 if not val(name): continue
                 pe=item.select_one('.price-new,.price-normal,.price')
