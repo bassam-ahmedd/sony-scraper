@@ -25,7 +25,7 @@ URLS = {
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
         'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
-        'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71772710825',
+        'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71772710825?fm=10',
         'alamcam':    'https://alamcam.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A7',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
@@ -39,7 +39,7 @@ URLS = {
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/digital-cameras-16168/?q=sony',
         'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
-        'camtime':    'https://camtime.sa/%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%AA%D8%B5%D9%88%D9%8A%D8%B11772717544',
+        'camtime':    'https://camtime.sa/%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%AA%D8%B5%D9%88%D9%8A%D8%B11772717544?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+camera&limit=100',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
@@ -536,8 +536,15 @@ def parse_abdulwahed(pt):
                 # For bundle names like "Camera + Lens", use only the primary part
                 if ' + ' in name:
                     name = name.split(' + ')[0].strip()
+                # Reject non-Sony brands that leak through
+                NON_SONY_BRANDS = ['canon','nikon','fujifilm','panasonic','olympus','leica',
+                                   'sigma','tamron','tokina','samyang','voigtlander',
+                                   ' eos ',' eos-',' eosr','canon rf','canon ef']
+                name_lower = norm(name)
+                if any(b in name_lower for b in NON_SONY_BRANDS) and 'sony' not in name_lower:
+                    nrej_nosony+=1; continue
                 # Check Sony brand in name OR URL; try slug fallback
-                if 'sony' not in norm(name) and 'sony' not in link.lower():
+                if 'sony' not in name_lower and 'sony' not in link.lower():
                     slug_name = slug_to_name(link.rstrip('/').split('/')[-1].split('?')[0])
                     if 'sony' in slug_name.lower():
                         name = slug_name
