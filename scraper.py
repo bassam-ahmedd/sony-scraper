@@ -536,20 +536,23 @@ def parse_abdulwahed(pt):
                 # For bundle names like "Camera + Lens", use only the primary part
                 if ' + ' in name:
                     name = name.split(' + ')[0].strip()
-                # Reject non-Sony brands that leak through
+                name_lower = norm(name)
+                # Reject clearly non-Sony brands
                 NON_SONY_BRANDS = ['canon','nikon','fujifilm','panasonic','olympus','leica',
                                    'sigma','tamron','tokina','samyang','voigtlander',
-                                   ' eos ',' eos-',' eosr','canon rf','canon ef']
-                name_lower = norm(name)
+                                   ' eos ',' eosr','nikkor','af-s ','af-p ','is usm','stm lens',
+                                   'dji ','gopro ','insta360']
                 if any(b in name_lower for b in NON_SONY_BRANDS) and 'sony' not in name_lower:
                     nrej_nosony+=1; continue
-                # Check Sony brand in name OR URL; try slug fallback
-                if 'sony' not in name_lower and 'sony' not in link.lower():
-                    slug_name = slug_to_name(link.rstrip('/').split('/')[-1].split('?')[0])
-                    if 'sony' in slug_name.lower():
-                        name = slug_name
-                    else:
-                        nrej_nosony+=1; continue
+                # If no "sony" in name, check if it has Sony-lens identifiers OR sony in URL
+                SONY_IDENTIFIERS = ['sony','fe ','fe pz','e pz','g master',' gm ',' gm lens',
+                                    'sel','sel2','sel5','sel7','sel8','sel9','sel1',
+                                    ' oss',' oss ','vario-tessar','planar','sonnar',
+                                    'ilce','ilme','zv-','α7','a7','a9','a1','a6']
+                has_sony = ('sony' in name_lower or 'sony' in link.lower() or
+                            any(s in name_lower for s in SONY_IDENTIFIERS))
+                if not has_sony:
+                    nrej_nosony+=1; continue
                 name=fix_arabic(name,link,val)
                 if not val(name):
                     nrej_val+=1
