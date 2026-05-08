@@ -220,10 +220,11 @@ def zenrows_js(url, wait=10000, scroll=False, retries=2):
        'js_render':'true','proxy_country':'sa','wait':str(wait)}
     if scroll:
         p['js_instructions']=json.dumps([
-            {'scroll_y':1000},{'wait':1500},{'scroll_y':2500},{'wait':1500},
-            {'scroll_y':4000},{'wait':1500},{'scroll_y':6000},{'wait':1500},
-            {'scroll_y':8000},{'wait':1500},{'scroll_y':10000},{'wait':2000},
-            {'scroll_y':12000},{'wait':2000},{'scroll_y':15000},{'wait':2000}])
+            {'scroll_y':1000},{'wait':1500},{'scroll_y':3000},{'wait':1500},
+            {'scroll_y':5000},{'wait':1500},{'scroll_y':7000},{'wait':1500},
+            {'scroll_y':9000},{'wait':1500},{'scroll_y':12000},{'wait':2000},
+            {'scroll_y':15000},{'wait':2000},{'scroll_y':18000},{'wait':2000},
+            {'scroll_y':22000},{'wait':2000},{'scroll_y':26000},{'wait':2000}])
     for a in range(retries+1):
         try:
             r=requests.get('https://api.zenrows.com/v1/',params=p,timeout=90)
@@ -530,9 +531,14 @@ def parse_abdulwahed(pt):
                 has_sony = ('sony' in name_lower or 'sony' in link.lower() or
                             any(s in name_lower for s in SONY_IDENTIFIERS))
                 if not has_sony:
-                    nrej_nosony+=1
-                    if nrej_nosony<=5: log.info(f'[Abdulwahed] NO-SONY: "{name[:60]}" | url: {link[-50:]}')
-                    continue
+                    # For the lenses category URL, if item passes is_lens and has no
+                    # competing brand identifier, it's likely a Sony lens with no brand prefix
+                    if pt == 'lenses' and val(name) and not any(b in name_lower for b in NON_SONY_BRANDS):
+                        pass  # Accept it — on a lenses category, brandless = likely Sony
+                    else:
+                        nrej_nosony+=1
+                        if nrej_nosony<=5: log.info(f'[Abdulwahed] NO-SONY: "{name[:60]}" | url: {link[-50:]}')
+                        continue
                 name=fix_arabic(name,link,val)
                 if not val(name):
                     nrej_val+=1
