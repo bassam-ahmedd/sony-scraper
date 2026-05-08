@@ -98,7 +98,7 @@ CAM_TYPES = [
 LENS_ID = [' lens','g master','gm ','zeiss','vario-tessar',
            'fe pz ','e pz ',' oss','macro g','macro gm',
            'sel','dn ','dg ','dc ','hsm',
-           ' fe ',' fe$','sony fe','sony e ']
+           'sony fe ','sony e ']
 
 def norm(s):
     # Normalize Greek alpha α → a for Sony model matching (α7 → a7)
