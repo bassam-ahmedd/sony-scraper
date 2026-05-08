@@ -468,6 +468,10 @@ def parse_mestores(pt):
                     t=el.get_text(strip=True)
                     if len(t)>10: name=t; break
             if not name: continue
+            # Strip pipe-separated specs/accessories (e.g. "Sony ZV-E10 | 24.2MP | Shooting Grip")
+            if '|' in name: name = name.split('|')[0].strip()
+            # Strip bundle suffixes after " + "
+            if ' + ' in name: name = name.split(' + ')[0].strip()
             name=fix_arabic(name,link,val)
             if not val(name):
                 nrej+=1
