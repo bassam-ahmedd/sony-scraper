@@ -471,7 +471,7 @@ def parse_mestores(pt):
             name=fix_arabic(name,link,val)
             if not val(name):
                 nrej+=1
-                if nrej<=3: log.info(f'[Me Stores] REJECTED: {name[:60]}')
+                log.info(f'[Me Stores] REJECTED ({pt}): "{name[:80]}"')
                 continue
             pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
             price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
