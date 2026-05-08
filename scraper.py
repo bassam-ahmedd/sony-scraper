@@ -34,7 +34,7 @@ URLS = {
                        'https://ksa.amt.tv/camcorders-digital-cameras/video/digital-cinematography-cameras.html?product_brand=1'],
         'qomra':      'https://qomra.pro/en/search?q=camera&filters[brand_id]=174800383&per_page=50',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
-        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869/digital-cameras-c-870',
+        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869',
         'amazon':     'https://www.amazon.sa/s?k=sony+alpha+camera&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/digital-cameras-16168/?q=sony',
         'cameramix':  'https://www.cameramix.com/Sony',
@@ -495,7 +495,8 @@ def parse_abdulwahed(pt):
     base=URLS[pt]['abdulwahed']; val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set(); page=1; consecutive_empty=0
     while page<=20:
-        url=f"{base}?page={page}" if page>1 else base
+        sep='&' if '?' in base else '?'
+        url=f"{base}{sep}page={page}" if page>1 else base
         log.info(f'[Abdulwahed] page {page}')
         html=zenrows_js(url,wait=10000)
         if not html: break
