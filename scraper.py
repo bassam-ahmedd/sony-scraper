@@ -23,7 +23,7 @@ URLS = {
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
         'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
-        'cameramix':  'https://www.cameramix.com/Lenses',
+        'cameramix':  'https://www.cameramix.com/Sony',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71772710825?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+fe+lens&limit=100',
@@ -527,9 +527,7 @@ def parse_abdulwahed(pt):
                                    ' eos ',' eosr','nikkor','af-s ','af-p ','is usm','stm lens',
                                    'dji ','gopro ','insta360']
                 if any(b in name_lower for b in NON_SONY_BRANDS) and 'sony' not in name_lower:
-                    nrej_nosony+=1
-                    if nrej_nosony<=10: log.info(f'[Abdulwahed] NSONY({pt}): "{name[:70]}"')
-                    continue
+                    nrej_nosony+=1; continue
                 # If no "sony" in name, check if it has Sony-lens identifiers OR sony in URL
                 SONY_IDENTIFIERS = ['sony','fe ','fe pz','e pz','g master',' gm ',' gm lens',
                                     'sel','sel2','sel5','sel7','sel8','sel9','sel1',
