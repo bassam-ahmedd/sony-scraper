@@ -549,8 +549,9 @@ def parse_abdulwahed(pt):
                 name=fix_arabic(name,link,val)
                 if not val(name):
                     nrej_val+=1
-                    if nrej_val<=3: log.info(f'[Abdulwahed] REJECTED by val: {name[:60]}')
+                    log.info(f'[Abdulwahed] REJECTED by val ({pt}): "{name[:80]}"')
                     continue
+                log.info(f'[Abdulwahed] ACCEPTED ({pt}): "{name[:80]}"')
                 price=None
                 for el in card.select('span,div,p'):
                     p=pparse(tr_east(el.get_text(strip=True)))
