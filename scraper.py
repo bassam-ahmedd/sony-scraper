@@ -523,11 +523,16 @@ def parse_abdulwahed(pt):
                 if ' + ' in name:
                     name = name.split(' + ')[0].strip()
                 name_lower = norm(name)
-                # Reject clearly non-Sony brands
-                NON_SONY_BRANDS = ['canon','nikon','fujifilm','panasonic','olympus','leica',
+                # Reject clearly non-Sony brands — even if "sony" appears later (e.g. "Tamron ... For Sony E-mount")
+                NON_SONY_BRANDS = ['canon','nikon','nikkon','fujifilm','panasonic','olympus','leica',
                                    'sigma','tamron','tokina','samyang','voigtlander',
                                    ' eos ',' eosr','nikkor','af-s ','af-p ','is usm','stm lens',
                                    'dji ','gopro ','insta360']
+                # Check if name STARTS with a non-Sony brand (catches "Tamron ... for Sony E-mount")
+                first_word = name_lower.split()[0] if name_lower.split() else ''
+                if first_word in ['canon','nikon','nikkon','sigma','tamron','tokina','samyang',
+                                  'fujifilm','panasonic','olympus','leica','voigtlander','dji','gopro']:
+                    nrej_nosony+=1; continue
                 if any(b in name_lower for b in NON_SONY_BRANDS) and 'sony' not in name_lower:
                     nrej_nosony+=1; continue
                 # If no "sony" in name, check if it has Sony-lens identifiers OR sony in URL
@@ -551,7 +556,6 @@ def parse_abdulwahed(pt):
                     nrej_val+=1
                     log.info(f'[Abdulwahed] REJECTED by val ({pt}): "{name[:80]}"')
                     continue
-                log.info(f'[Abdulwahed] ACCEPTED ({pt}): "{name[:80]}"')
                 price=None
                 for el in card.select('span,div,p'):
                     p=pparse(tr_east(el.get_text(strip=True)))
