@@ -20,7 +20,7 @@ URLS = {
         'our_site':   'https://ksa.amt.tv/camera-accessories/photography/lenses.html?product_brand=1',
         'qomra':      'https://qomra.pro/en/search?q=lens&filters[brand_id]=174800383&per_page=50',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/lenses?page={page}&brand%5Bfilter%5D=SONY%2C1722',
-        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879?sort=p.price&order=DESC&limit=100',
+        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
         'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
         'cameramix':  'https://www.cameramix.com/Sony',
@@ -34,7 +34,7 @@ URLS = {
                        'https://ksa.amt.tv/camcorders-digital-cameras/video/digital-cinematography-cameras.html?product_brand=1'],
         'qomra':      'https://qomra.pro/en/search?q=camera&filters[brand_id]=174800383&per_page=50',
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
-        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869?sort=p.price&order=DESC&limit=100',
+        'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869',
         'amazon':     'https://www.amazon.sa/s?k=sony+alpha+camera&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/digital-cameras-16168/?q=sony',
         'cameramix':  'https://www.cameramix.com/Sony',
@@ -566,7 +566,7 @@ def parse_abdulwahed(pt):
         log.info(f'[Abdulwahed] p{page}: {nf} valid ({nrej_nosony} no-sony, {nrej_val} invalid)')
         if nf==0: consecutive_empty+=1
         else: consecutive_empty=0
-        if consecutive_empty>=6: break  # Must see 6 empty pages before stopping (random Sony distribution)
+        if consecutive_empty>=3: break
         page+=1
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
