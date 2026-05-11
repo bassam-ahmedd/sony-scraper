@@ -351,9 +351,9 @@ def parse_our_site(pt):
             items=soup.select('li.product-item,.product-item-info')
             if not items:
                 items=soup.select('[class*="product-item"]')
-            # If page 1 returns 0 items, retry once with longer wait
-            if not items and page==1:
-                log.warning(f'[Our Site] 0 items on p1, retrying with wait=20000')
+            # If page returns 0 items, retry once with longer wait
+            if not items:
+                log.warning(f'[Our Site] 0 items on p{page}, retrying with wait=20000')
                 html=zenrows_js(url,wait=20000)
                 if html:
                     soup=BeautifulSoup(html,'lxml')
