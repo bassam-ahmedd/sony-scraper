@@ -435,142 +435,135 @@ def parse_qomra(pt):
 def parse_mestores(pt):
     base=URLS[pt]['mestores'].format(page=1); val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set()
-    log.info(f'[Me Stores] page 1')
-    # Me Stores is a single-page infinite scroll store — load with JS scroll
-    html=zenrows_js(base,wait=15000,scroll=True)
-    if not html:
-        html=zenrows_js(base,wait=20000)
-    if not html:
-        log.info(f'[Me Stores] {pt}: 0'); return products
-    soup=BeautifulSoup(html,'lxml')
-    anchors=soup.select('a[href*="/en_sa/"]')
-    anchors=[a for a in anchors if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
-    if not anchors:
-        anchors=[a for a in soup.select('a[href]')
-                 if '/en_sa/' in a.get('href','') and
-                 re.search(r'-\d{3,}', a.get('href','')) and
-                 a.get('href','').count('/') >= 3]
-    log.info(f'[Me Stores] found {len(anchors)} anchors')
-    if not anchors:
-        body=soup.find('body'); log.warning(f'[Me Stores] snippet: {str(body)[:200] if body else ""}')
-        log.info(f'[Me Stores] {pt}: 0'); return products
-    nf=0; nrej=0
-    for a in anchors:
-        try:
-            link=a.get('href','').strip()
-            if not link.startswith('http'): link='https://mestores.com'+link
-            if link in ('https://mestores.com','https://mestores.com/en_sa'): continue
-            if link in seen: continue
-            seen.add(link)
-            name=''; bl=0
-            for img in a.select('img[alt]'):
-                alt=img.get('alt','').strip()
-                if alt.lower() in ('tabby','tamara','sar','') or len(alt)<10: continue
-                if len(alt)>bl: name=alt; bl=len(alt)
-            if not name:
-                for el in a.select('h1,h2,h3,h4,p,[class*="name"],[class*="title"]'):
-                    t=el.get_text(strip=True)
-                    if len(t)>10: name=t; break
-            if not name: continue
-            # Strip pipe-separated specs/accessories (e.g. "Sony ZV-E10 | 24.2MP | Shooting Grip")
-            if '|' in name: name = name.split('|')[0].strip()
-            # Strip bundle suffixes after " + "
-            if ' + ' in name: name = name.split(' + ')[0].strip()
-            name=fix_arabic(name,link,val)
-            if not val(name):
-                nrej+=1
-                log.info(f'[Me Stores] REJECTED ({pt}): "{name[:80]}"')
-                continue
-            pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
-            price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
-            if not price:
-                for el in a.select('span'):
-                    p=pparse(tr_east(el.get_text(strip=True)))
-                    if p and p>100: price=p; break
-            avail=detect_avail(a)
-            products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
-        except Exception as e: log.debug(f'[Me Stores] {e}')
-    log.info(f'[Me Stores] found {nf} valid, {nrej} rejected')
+    # Me Stores uses infinite scroll but also supports ?page=N
+    # Fetch page=1 (with scroll) and page=2 to catch all products
+    pages_to_fetch=[base, base.replace('page=1','page=2')]
+    for page_num, page_url in enumerate(pages_to_fetch, 1):
+        log.info(f'[Me Stores] page {page_num}')
+        html=zenrows_js(page_url,wait=15000,scroll=True)
+        if not html:
+            html=zenrows_js(page_url,wait=20000)
+        if not html:
+            continue
+        soup=BeautifulSoup(html,'lxml')
+        anchors=soup.select('a[href*="/en_sa/"]')
+        anchors=[a for a in anchors if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
+        if not anchors:
+            anchors=[a for a in soup.select('a[href]')
+                     if '/en_sa/' in a.get('href','') and
+                     re.search(r'-\d{3,}', a.get('href','')) and
+                     a.get('href','').count('/') >= 3]
+        log.info(f'[Me Stores] found {len(anchors)} anchors on page {page_num}')
+        if not anchors:
+            if page_num==1:
+                body=soup.find('body'); log.warning(f'[Me Stores] snippet: {str(body)[:200] if body else ""}')
+            break
+        nf=0; nrej=0
+        for a in anchors:
+            try:
+                link=a.get('href','').strip()
+                if not link.startswith('http'): link='https://mestores.com'+link
+                if link in ('https://mestores.com','https://mestores.com/en_sa'): continue
+                if link in seen: continue
+                seen.add(link)
+                name=''; bl=0
+                for img in a.select('img[alt]'):
+                    alt=img.get('alt','').strip()
+                    if alt.lower() in ('tabby','tamara','sar','') or len(alt)<10: continue
+                    if len(alt)>bl: name=alt; bl=len(alt)
+                if not name:
+                    for el in a.select('h1,h2,h3,h4,p,[class*="name"],[class*="title"]'):
+                        t=el.get_text(strip=True)
+                        if len(t)>10: name=t; break
+                if not name: continue
+                if '|' in name: name = name.split('|')[0].strip()
+                if ' + ' in name: name = name.split(' + ')[0].strip()
+                name=fix_arabic(name,link,val)
+                if not val(name):
+                    nrej+=1
+                    log.info(f'[Me Stores] REJECTED ({pt}): "{name[:80]}"')
+                    continue
+                pe=a.select_one('[class*="priceAmount"],[class*="priceValue"]')
+                price=pparse(tr_east(pe.get_text(strip=True))) if pe else None
+                if not price:
+                    for el in a.select('span'):
+                        p=pparse(tr_east(el.get_text(strip=True)))
+                        if p and p>100: price=p; break
+                avail=detect_avail(a)
+                products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
+            except Exception as e: log.debug(f'[Me Stores] {e}')
+        log.info(f'[Me Stores] found {nf} new valid on page {page_num}, {nrej} rejected')
+        # If page 2 returns 0 new items, stop
+        if nf==0 and page_num>1: break
     log.info(f'[Me Stores] {pt}: {len(products)}'); return products
 
 def parse_abdulwahed(pt):
-    base=URLS[pt]['abdulwahed']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen=set(); page=1; consecutive_empty=0
-    while page<=20:
-        sep='&' if '?' in base else '?'
-        url=f"{base}{sep}page={page}" if page>1 else base
-        log.info(f'[Abdulwahed] page {page}')
-        html=zenrows_js(url,wait=10000)
-        if not html: break
-        soup=BeautifulSoup(html,'lxml')
-        cards=soup.select('div[class*="grid-cols-2"] > div,div[class*="grid-cols-3"] > div,div[class*="grid-cols-4"] > div,div[class*="sm:grid-cols"] > div')
-        if not cards:
-            cards=[d for d in soup.select('div') if d.select_one('img[alt]') and re.search(r'\d{3,}',d.get_text()) and d.select_one('a[href]')]
-        log.info(f'[Abdulwahed] found {len(cards)} cards p{page}')
-        if not cards: break
-        nf=0; nrej_nosony=0; nrej_val=0
-        for card in cards:
+    val=is_lens if pt=='lenses' else is_camera
+    # Use manufacturer_id=56 (Sony) to get a Sony-only filtered page
+    base_url=URLS[pt]['abdulwahed']
+    sep='&' if '?' in base_url else '?'
+    url=f"{base_url}{sep}manufacturer_id=56"
+    products=[]; seen=set()
+    log.info(f'[Abdulwahed] fetching Sony-filtered page ({pt})')
+    # Try direct HTTP first (much faster, no JS needed — Next.js SSR embeds JSON)
+    import requests as _req
+    headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    try:
+        r=_req.get(url,headers=headers,timeout=20)
+        html=r.text if r.status_code==200 else None
+    except Exception as e:
+        log.warning(f'[Abdulwahed] direct HTTP failed: {e}')
+        html=None
+    if not html:
+        log.info('[Abdulwahed] falling back to ZenRows')
+        html=zenrows_js(url,wait=8000)
+    if not html:
+        log.info(f'[Abdulwahed] {pt}: 0'); return products
+    # Extract Next.js __NEXT_DATA__ JSON embedded in the page
+    import json as _json
+    m=re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',html,re.DOTALL)
+    if not m:
+        # Fallback: try finding the JSON blob directly
+        m=re.search(r'"products":\s*(\[.*?\])\s*,"categoryID"',html,re.DOTALL)
+        if m:
             try:
-                ie=card.select_one('img[alt]')
-                if not ie: continue
-                name=ie.get('alt','').strip()
-                if not name or len(name)<5: continue
-                le=card.select_one('a[href]')
-                if not le: continue
-                link=le.get('href','').strip()
-                if not link.startswith('http'): link='https://www.abdulwahed.com'+link
-                if link in seen: continue
-                seen.add(link)
-                # For bundle names like "Camera + Lens", use only the primary part
-                if ' + ' in name:
-                    name = name.split(' + ')[0].strip()
-                name_lower = norm(name)
-                # Reject clearly non-Sony brands — even if "sony" appears later (e.g. "Tamron ... For Sony E-mount")
-                NON_SONY_BRANDS = ['canon','nikon','nikkon','fujifilm','panasonic','olympus','leica',
-                                   'sigma','tamron','tokina','samyang','voigtlander',
-                                   ' eos ',' eosr','nikkor','af-s ','af-p ','is usm','stm lens',
-                                   'dji ','gopro ','insta360']
-                # Check if name STARTS with a non-Sony brand (catches "Tamron ... for Sony E-mount")
-                first_word = name_lower.split()[0] if name_lower.split() else ''
-                if first_word in ['canon','nikon','nikkon','sigma','tamron','tokina','samyang',
-                                  'fujifilm','panasonic','olympus','leica','voigtlander','dji','gopro']:
-                    nrej_nosony+=1; continue
-                if any(b in name_lower for b in NON_SONY_BRANDS) and 'sony' not in name_lower:
-                    nrej_nosony+=1; continue
-                # If no "sony" in name, check if it has Sony-lens identifiers OR sony in URL
-                SONY_IDENTIFIERS = ['sony','fe ','fe pz','e pz','g master',' gm ',' gm lens',
-                                    'sel','sel2','sel5','sel7','sel8','sel9','sel1',
-                                    ' oss',' oss ','vario-tessar','planar','sonnar',
-                                    'ilce','ilme','zv-','α7','a7','a9','a1','a6']
-                has_sony = ('sony' in name_lower or 'sony' in link.lower() or
-                            any(s in name_lower for s in SONY_IDENTIFIERS))
-                if not has_sony:
-                    # For the lenses category URL, if item passes is_lens and has no
-                    # competing brand identifier, it's likely a Sony lens with no brand prefix
-                    if pt == 'lenses' and val(name) and not any(b in name_lower for b in NON_SONY_BRANDS):
-                        pass  # Accept it — on a lenses category, brandless = likely Sony
-                    else:
-                        nrej_nosony+=1
-                        if nrej_nosony<=5: log.info(f'[Abdulwahed] NO-SONY: "{name[:60]}" | url: {link[-50:]}')
-                        continue
-                name=fix_arabic(name,link,val)
-                if not val(name):
-                    nrej_val+=1
-                    log.info(f'[Abdulwahed] REJECTED by val ({pt}): "{name[:80]}"')
-                    continue
-                price=None
-                for el in card.select('span,div,p'):
-                    p=pparse(tr_east(el.get_text(strip=True)))
-                    if p and 100<p<200000: price=p; break
-                avail=detect_avail(card)
-                products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
-            except Exception as e: log.debug(f'[Abdulwahed] {e}')
-        log.info(f'[Abdulwahed] p{page}: {nf} valid ({nrej_nosony} no-sony, {nrej_val} invalid)')
-        if nf==0: consecutive_empty+=1
-        else: consecutive_empty=0
-        if consecutive_empty>=3: break
-        page+=1
-    log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
+                product_list=_json.loads(m.group(1))
+            except: product_list=[]
+        else:
+            log.warning(f'[Abdulwahed] no __NEXT_DATA__ found, falling back to HTML parser')
+            # Fall back to old HTML card parser for this session
+            product_list=[]
+    else:
+        try:
+            data=_json.loads(m.group(1))
+            product_list=(data.get('props',{}).get('pageProps',{}).get('products') or [])
+        except Exception as e:
+            log.warning(f'[Abdulwahed] JSON parse error: {e}')
+            product_list=[]
+    log.info(f'[Abdulwahed] found {len(product_list)} products in JSON')
+    for item in product_list:
+        try:
+            # Filter Sony only
+            brand=(item.get('option_text_brand') or [''])[0]
+            if brand.lower()!='sony': continue
+            name_list=item.get('name') or []
+            name=name_list[0] if name_list else ''
+            if not name or len(name)<5: continue
+            # For bundle names, use only the primary product name
+            if ' + ' in name: name=name.split(' + ')[0].strip()
+            name=fix_arabic(name,'',val)
+            if not val(name): continue
+            rewrite=item.get('rewrite_url','')
+            link=f"https://www.abdulwahed.com/en/{rewrite}" if rewrite else ''
+            if link in seen: continue
+            seen.add(link)
+            # Get price
+            prices=item.get('prices_with_tax',{})
+            price=prices.get('discounted_price') or prices.get('price') or prices.get('original_price')
+            try: price=float(price) if price else None
+            except: price=None
+            products.append({'name':name,'price':price,'availability':'In Stock','url':link})
+        except Exception as e: log.debug(f'[Abdulwahed] item error: {e}')
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
 def parse_amazon(pt):
