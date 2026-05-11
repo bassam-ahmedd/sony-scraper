@@ -221,14 +221,14 @@ def zenrows_js(url, wait=10000, scroll=False, retries=2):
        'js_render':'true','proxy_country':'sa','wait':str(wait)}
     if scroll:
         p['js_instructions']=json.dumps([
-            {'scroll_y':1000},{'wait':1500},{'scroll_y':3000},{'wait':1500},
-            {'scroll_y':5000},{'wait':1500},{'scroll_y':7000},{'wait':1500},
-            {'scroll_y':9000},{'wait':1500},{'scroll_y':12000},{'wait':2000},
-            {'scroll_y':15000},{'wait':2000},{'scroll_y':18000},{'wait':2000},
-            {'scroll_y':22000},{'wait':2000},{'scroll_y':26000},{'wait':2000},
-            {'scroll_y':30000},{'wait':2000},{'scroll_y':34000},{'wait':2000},
-            {'scroll_y':38000},{'wait':2000},{'scroll_y':42000},{'wait':2000},
-            {'scroll_y':46000},{'wait':2000},{'scroll_y':50000},{'wait':3000}])
+            {'scroll_y':5000},{'wait':2000},
+            {'scroll_y':10000},{'wait':2000},
+            {'scroll_y':16000},{'wait':2000},
+            {'scroll_y':22000},{'wait':2000},
+            {'scroll_y':28000},{'wait':2000},
+            {'scroll_y':35000},{'wait':2000},
+            {'scroll_y':42000},{'wait':2500},
+            {'scroll_y':50000},{'wait':3000}])
     for a in range(retries+1):
         try:
             r=requests.get('https://api.zenrows.com/v1/',params=p,timeout=90)
