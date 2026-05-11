@@ -718,6 +718,7 @@ def parse_cameramix(pt):
         soup=BeautifulSoup(html,'lxml')
         nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
         if not nxt: break  # Only stop when pagination ends, not when a page has no matches
+        if not new and pt=='cameras': break  # For cameras, stop when no new matches (lenses scattered across all pages)
         page+=1; time.sleep(1.5)
     log.info(f'[CameraMix] {pt}: {len(products)}'); return products
 
