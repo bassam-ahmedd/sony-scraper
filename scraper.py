@@ -25,7 +25,7 @@ URLS = {
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
         'cameramix':  'https://www.cameramix.com/Camera_Lenses',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
-        'camtime':    'https://camtime.sa/?fm=10',
+        'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71778543834/sony-lens?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+fe+lens&limit=100',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
@@ -714,7 +714,8 @@ def parse_cameramix(pt):
         soup=BeautifulSoup(html,'lxml')
         nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
         if not nxt: break
-        if not new: break  # Stop when a page yields no new items (dedup caught all)
+        if not new and pt=='cameras': break  # cameras: stop when no new cameras found
+        # lenses: continue through all pages (lenses scattered across /Sony pages)
         page+=1; time.sleep(1.5)
     log.info(f'[CameraMix] {pt}: {len(products)}'); return products
 
@@ -737,10 +738,9 @@ def parse_camtime(pt):
         sep='&' if '?' in base else '?'
         url=base if page==1 else f"{base}{sep}page={page}"
         log.info(f'[CamTime] page {page}')
-        # Lenses subcategory needs JS rendering; cameras works with plain HTTP
+        # Lenses subcategory needs JS rendering with longer wait; cameras works with plain HTTP
         if pt=='lenses':
-            html=plain(url,ssl=False)
-            if not html: html=zenrows_js(url,wait=8000)
+            html=zenrows_js(url,wait=12000)
         else:
             html=plain(url,ssl=False)
             if not html: html=zenrows_js(url,wait=8000)
