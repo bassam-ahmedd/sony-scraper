@@ -25,7 +25,7 @@ URLS = {
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
         'cameramix':  'https://www.cameramix.com/Camera_Lenses',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
-        'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71778543834/sony-lens?fm=10',
+        'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71778543834?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+fe+lens&limit=100',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
@@ -739,14 +739,11 @@ def parse_camtime(pt):
         url=base if page==1 else f"{base}{sep}page={page}"
         log.info(f'[CamTime] page {page}')
         if pt=='lenses':
-            # CamTime lenses page is Salla with JS rendering — use scroll
-            html=zenrows_js(url,wait=10000,scroll=True)
+            # Parent lenses category works with plain HTTP (OpenCart structure)
+            html=plain(url,ssl=False)
+            if not html: html=zenrows_js(url,wait=8000)
             if not html: break
-            results=salla_parse(html,'https://camtime.sa','CamTime',val)
-            if not results and page==1:
-                log.info('[CamTime] lenses retry with longer wait')
-                html=zenrows_js(url,wait=15000,scroll=True)
-                if html: results=salla_parse(html,'https://camtime.sa','CamTime',val)
+            results=opencart_parse(html,'https://camtime.sa','CamTime',val)
         else:
             # CamTime cameras page works with plain HTTP (OpenCart)
             html=plain(url,ssl=False)
