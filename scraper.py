@@ -552,7 +552,9 @@ def parse_abdulwahed(pt):
             # For bundle names, use only the primary product name
             if ' + ' in name: name=name.split(' + ')[0].strip()
             name=fix_arabic(name,'',val)
-            if not val(name): continue
+            if not val(name):
+                log.info(f'[Abdulwahed] REJECTED by val ({pt}): "{name[:80]}"')
+                continue
             rewrite=item.get('rewrite_url','')
             link=f"https://www.abdulwahed.com/en/{rewrite}" if rewrite else ''
             if link in seen: continue
