@@ -25,7 +25,7 @@ URLS = {
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
         'cameramix':  'https://www.cameramix.com/Camera_Lenses',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
-        'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71778543834/sony-lens?fm=10',
+        'camtime':    'https://camtime.sa/?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+fe+lens&limit=100',
         'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
     },
@@ -689,17 +689,18 @@ def parse_noon(pt):
     log.info(f'[Noon] {pt}: {len(products)}'); return products
 
 def parse_cameramix(pt):
-    base=URLS[pt]['cameramix']; val=is_lens if pt=='lenses' else is_camera
+    # For lenses: use /Sony page (all-brands lenses page has no Sony filter)
+    # For cameras: use /Sony page, stop when no new cameras found
+    if pt=='lenses':
+        base='https://www.cameramix.com/Sony'
+    else:
+        base=URLS[pt]['cameramix']
+    val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set(); page=1
     while page<=20:
         url=f"{base}?page={page}" if page>1 else base
         log.info(f'[CameraMix] page {page}')
         html=zenrows_std(url)
-        # If lenses URL 404s, fall back to /Sony
-        if not html and pt=='lenses' and page==1:
-            log.info('[CameraMix] lenses URL failed, falling back to /Sony')
-            base='https://www.cameramix.com/Sony'
-            url=base; html=zenrows_std(url)
         if not html: break
         results=opencart_parse(html,'https://www.cameramix.com','CameraMix',val)
         if not results and page==1:
@@ -712,8 +713,8 @@ def parse_cameramix(pt):
         if not html: break
         soup=BeautifulSoup(html,'lxml')
         nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
-        if not nxt: break  # Only stop when pagination ends, not when a page has no matches
-        if not new and pt=='cameras': break  # For cameras, stop when no new matches (lenses scattered across all pages)
+        if not nxt: break
+        if not new: break  # Stop when a page yields no new items (dedup caught all)
         page+=1; time.sleep(1.5)
     log.info(f'[CameraMix] {pt}: {len(products)}'); return products
 
@@ -738,7 +739,8 @@ def parse_camtime(pt):
         log.info(f'[CamTime] page {page}')
         # Lenses subcategory needs JS rendering; cameras works with plain HTTP
         if pt=='lenses':
-            html=zenrows_js(url,wait=8000)
+            html=plain(url,ssl=False)
+            if not html: html=zenrows_js(url,wait=8000)
         else:
             html=plain(url,ssl=False)
             if not html: html=zenrows_js(url,wait=8000)
