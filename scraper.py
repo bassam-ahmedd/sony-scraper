@@ -23,7 +23,7 @@ URLS = {
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/lenses-c-879',
         'amazon':     'https://www.amazon.sa/s?k=sony+lens&i=electronics&language=en_AE&rh=p_89%3ASony',
         'noon':       'https://www.noon.com/saudi-en/electronics-and-mobiles/camera-and-photo-16165/lenses-16166/?q=sony',
-        'cameramix':  'https://www.cameramix.com/Camera-Lenses',
+        'cameramix':  'https://www.cameramix.com/Camera_Lenses',
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71778543834/sony-lens?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+fe+lens&limit=100',
@@ -736,8 +736,12 @@ def parse_camtime(pt):
         sep='&' if '?' in base else '?'
         url=base if page==1 else f"{base}{sep}page={page}"
         log.info(f'[CamTime] page {page}')
-        html=plain(url,ssl=False)
-        if not html: html=zenrows_js(url,wait=8000)
+        # Lenses subcategory needs JS rendering; cameras works with plain HTTP
+        if pt=='lenses':
+            html=zenrows_js(url,wait=8000)
+        else:
+            html=plain(url,ssl=False)
+            if not html: html=zenrows_js(url,wait=8000)
         if not html: break
         results=opencart_parse(html,'https://camtime.sa','CamTime',val)
         new=[p for p in results if p['url'] not in seen]
