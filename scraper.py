@@ -738,20 +738,28 @@ def parse_camtime(pt):
         sep='&' if '?' in base else '?'
         url=base if page==1 else f"{base}{sep}page={page}"
         log.info(f'[CamTime] page {page}')
-        # Lenses subcategory needs JS rendering with longer wait; cameras works with plain HTTP
         if pt=='lenses':
-            html=zenrows_js(url,wait=12000)
+            # CamTime lenses page is Salla with JS rendering — use scroll
+            html=zenrows_js(url,wait=10000,scroll=True)
+            if not html: break
+            results=salla_parse(html,'https://camtime.sa','CamTime',val)
+            if not results and page==1:
+                log.info('[CamTime] lenses retry with longer wait')
+                html=zenrows_js(url,wait=15000,scroll=True)
+                if html: results=salla_parse(html,'https://camtime.sa','CamTime',val)
         else:
+            # CamTime cameras page works with plain HTTP (OpenCart)
             html=plain(url,ssl=False)
             if not html: html=zenrows_js(url,wait=8000)
-        if not html: break
-        results=opencart_parse(html,'https://camtime.sa','CamTime',val)
+            if not html: break
+            results=opencart_parse(html,'https://camtime.sa','CamTime',val)
         new=[p for p in results if p['url'] not in seen]
         for p in new: seen.add(p['url'])
         products.extend(new)
+        if not new: break
         soup=BeautifulSoup(html,'lxml')
         nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
-        if not nxt or not new: break
+        if not nxt: break
         page+=1; time.sleep(1.5)
     log.info(f'[CamTime] {pt}: {len(products)}'); return products
 
