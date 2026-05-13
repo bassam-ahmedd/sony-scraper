@@ -499,57 +499,67 @@ def parse_mestores(pt):
 
 def parse_abdulwahed(pt):
     val=is_lens if pt=='lenses' else is_camera
-    # Use manufacturer_id=56 (Sony) to get a Sony-only filtered page
     base_url=URLS[pt]['abdulwahed']
-    sep='&' if '?' in base_url else '?'
-    url=f"{base_url}{sep}manufacturer_id=56"
     products=[]; seen=set()
-    log.info(f'[Abdulwahed] fetching Sony-filtered page ({pt})')
-    # Try direct HTTP first (much faster, no JS needed — Next.js SSR embeds JSON)
+    log.info(f'[Abdulwahed] clicking Sony filter ({pt})')
+    # Use ZenRows JS instructions to click the Sony brand checkbox (input#brand-107)
+    # then wait for the page to re-render with Sony-only products
+    import json as _json
+    js_instructions=_json.dumps([
+        {'wait': 2000},
+        {'click': '#brand-107'},
+        {'wait': 4000},
+    ])
     import requests as _req
-    headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    try:
-        r=_req.get(url,headers=headers,timeout=20)
-        html=r.text if r.status_code==200 else None
-    except Exception as e:
-        log.warning(f'[Abdulwahed] direct HTTP failed: {e}')
-        html=None
-    if not html:
-        log.info('[Abdulwahed] falling back to ZenRows')
-        html=zenrows_js(url,wait=8000)
+    ZENROWS_KEY=os.environ.get('ZENROWS_API_KEY','')
+    params={
+        'apikey': ZENROWS_KEY,
+        'url': base_url,
+        'antibot': 'true',
+        'premium_proxy': 'true',
+        'js_render': 'true',
+        'proxy_country': 'sa',
+        'wait': '2000',
+        'js_instructions': js_instructions,
+    }
+    html=None
+    for attempt in range(1,4):
+        try:
+            r=_req.get('https://api.zenrows.com/v1/',params=params,timeout=90)
+            if r.status_code==200 and len(r.text)>500:
+                html=r.text; break
+            else:
+                log.warning(f'[Abdulwahed] attempt {attempt}: {r.status_code}')
+        except Exception as e:
+            log.warning(f'[Abdulwahed] attempt {attempt}: {e}')
+        time.sleep(3)
     if not html:
         log.info(f'[Abdulwahed] {pt}: 0'); return products
-    # Extract Next.js __NEXT_DATA__ JSON embedded in the page
-    import json as _json
+    # Parse the filtered page — products are now Sony-only in the HTML
+    from bs4 import BeautifulSoup as _BS
+    soup=_BS(html,'lxml')
+    # Extract from __NEXT_DATA__ JSON first (most reliable)
     m=re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',html,re.DOTALL)
-    if not m:
-        # Fallback: try finding the JSON blob directly
-        m=re.search(r'"products":\s*(\[.*?\])\s*,"categoryID"',html,re.DOTALL)
-        if m:
-            try:
-                product_list=_json.loads(m.group(1))
-            except: product_list=[]
-        else:
-            log.warning(f'[Abdulwahed] no __NEXT_DATA__ found, falling back to HTML parser')
-            # Fall back to old HTML card parser for this session
-            product_list=[]
-    else:
+    product_list=[]
+    if m:
         try:
             data=_json.loads(m.group(1))
             product_list=(data.get('props',{}).get('pageProps',{}).get('products') or [])
         except Exception as e:
             log.warning(f'[Abdulwahed] JSON parse error: {e}')
-            product_list=[]
-    log.info(f'[Abdulwahed] found {len(product_list)} products in JSON')
+    log.info(f'[Abdulwahed] found {len(product_list)} products in JSON after click')
+    # If JSON has fewer than expected, also try HTML cards
+    html_count=0
+    if len(product_list) < 5:
+        cards=soup.select('div[class*="grid"] > div, [class*="product-card"]')
+        log.info(f'[Abdulwahed] fallback HTML cards: {len(cards)}')
     for item in product_list:
         try:
-            # Filter Sony only
             brand=(item.get('option_text_brand') or [''])[0]
             if brand.lower()!='sony': continue
             name_list=item.get('name') or []
             name=name_list[0] if name_list else ''
             if not name or len(name)<5: continue
-            # For bundle names, use only the primary product name
             if ' + ' in name: name=name.split(' + ')[0].strip()
             name=fix_arabic(name,'',val)
             if not val(name):
@@ -559,7 +569,6 @@ def parse_abdulwahed(pt):
             link=f"https://www.abdulwahed.com/en/{rewrite}" if rewrite else ''
             if link in seen: continue
             seen.add(link)
-            # Get price
             prices=item.get('prices_with_tax',{})
             price=prices.get('discounted_price') or prices.get('price') or prices.get('original_price')
             try: price=float(price) if price else None
