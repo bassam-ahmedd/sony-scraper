@@ -499,83 +499,57 @@ def parse_mestores(pt):
 
 def parse_abdulwahed(pt):
     val=is_lens if pt=='lenses' else is_camera
-    base_url=URLS[pt]['abdulwahed']
     products=[]; seen=set()
-    log.info(f'[Abdulwahed] clicking Sony filter ({pt})')
-    import json as _json, requests as _req
-    ZENROWS_KEY=os.environ.get('ZENROWS_API_KEY','')
-    # Click Sony checkbox and wait for JS re-render, then read product cards
-    js_instructions=_json.dumps([
-        {'wait': 2000},
-        {'click': '#brand-107'},
-        {'wait': 5000},
-    ])
-    params={
-        'apikey': ZENROWS_KEY,
-        'url': base_url,
-        'antibot': 'true',
-        'premium_proxy': 'true',
-        'js_render': 'true',
-        'proxy_country': 'sa',
-        'wait': '2000',
-        'js_instructions': js_instructions,
+    log.info(f'[Abdulwahed] scraping via search ({pt})')
+    import requests as _req
+    from urllib.parse import quote as _quote
+    headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    # Use multiple targeted search queries to get all Sony cameras/lenses
+    # The main search endpoint returns 32 items per query, so use specific queries
+    queries = {
+        'lenses': ['sony lens fe', 'sony fe 50mm', 'sony fe 24', 'sony fe 85', 'sony fe 70', 'sony fe 16', 'sony fe 35', 'sony fe 90', 'sony fe 12', 'sony fe 135', 'sony fe 200'],
+        'cameras': ['sony alpha camera', 'sony ilce camera', 'sony zv camera', 'sony a7 camera', 'sony a9 camera', 'sony fx camera', 'sony a6 camera', 'sony alpha 7', 'sony mirrorless'],
     }
-    html=None
-    for attempt in range(1,4):
+    for q in queries[pt]:
         try:
-            r=_req.get('https://api.zenrows.com/v1/',params=params,timeout=90)
-            if r.status_code==200 and len(r.text)>500:
-                html=r.text; break
-            else:
-                log.warning(f'[Abdulwahed] attempt {attempt}: {r.status_code}')
+            url = f'https://www.abdulwahed.com/en/search?q={_quote(q)}'
+            r = _req.get(url, headers=headers, timeout=15)
+            if r.status_code != 200: continue
+            import re as _re, json as _json
+            m = _re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.DOTALL)
+            if not m: continue
+            data = _json.loads(m.group(1))
+            prods = data['props']['pageProps']['searchResults'].get('products', [])
+            for p in prods:
+                name = p.get('name','')
+                if isinstance(name, list): name = name[0] if name else ''
+                if not name or len(name) < 5: continue
+                brand = p.get('brand','')
+                if isinstance(brand, list): brand = brand[0] if brand else ''
+                if brand.lower() not in ('sony',''): continue
+                if ' + ' in name: name = name.split(' + ')[0].strip()
+                sku = p.get('sku','')
+                if isinstance(sku, list): sku = sku[0] if sku else ''
+                link = p.get('url','') or f"https://www.abdulwahed.com/en/{p.get('url_key','')}"
+                if isinstance(link, list): link = link[0] if link else ''
+                key = sku or name
+                if key in seen: continue
+                seen.add(key)
+                name = fix_arabic(name, link, val)
+                if not val(name): continue
+                price = None
+                ptax = p.get('prices_with_tax') or p.get('price_incl_tax') or {}
+                if isinstance(ptax, dict):
+                    price = ptax.get('discounted_price') or ptax.get('price') or ptax.get('original_price')
+                elif isinstance(ptax, (int,float,str)):
+                    try: price = float(ptax)
+                    except: pass
+                try: price = float(price) if price else None
+                except: price = None
+                products.append({'name':name,'price':price,'availability':'In Stock','url':link})
         except Exception as e:
-            log.warning(f'[Abdulwahed] attempt {attempt}: {e}')
-        time.sleep(3)
-    if not html:
-        log.info(f'[Abdulwahed] {pt}: 0'); return products
-    # After click, read rendered product cards (NOT __NEXT_DATA__ which is static)
-    soup=BeautifulSoup(html,'lxml')
-    # Log a snippet to verify the filter was applied
-    reset_btn=soup.select_one('button[class*="bg-primary"]')
-    brand_checked=soup.select_one('input#brand-107[checked], input#brand-107.checked')
-    log.info(f'[Abdulwahed] reset_btn={bool(reset_btn)} brand_checked={bool(brand_checked)} html_len={len(html)}')
-    # Find product cards — they appear in the grid after filter is applied
-    # Abdulwahed uses img[alt] inside grid divs for product names
-    cards=soup.select('div[class*="grid"] a[href*="/en/"], main a[href*="/en/"]')
-    # Also try product card containers
-    if len(cards) < 3:
-        cards=soup.select('a[href*="abdulwahed.com/en/"]')
-    log.info(f'[Abdulwahed] found {len(cards)} links after click')
-    for card in cards:
-        try:
-            link=card.get('href','').strip()
-            if not link.startswith('http'): link='https://www.abdulwahed.com'+link
-            # Filter out nav/menu links — product URLs contain category slugs
-            if not re.search(r'/en/[a-z].*-[a-z0-9]', link): continue
-            if link in seen: continue
-            seen.add(link)
-            # Get name from img alt or text
-            img=card.select_one('img[alt]')
-            name=img.get('alt','').strip() if img else ''
-            if not name:
-                name=card.get_text(strip=True)[:80]
-            if not name or len(name)<5: continue
-            if ' + ' in name: name=name.split(' + ')[0].strip()
-            # Check Sony brand
-            name_lower=name.lower()
-            if not any(s in name_lower for s in ['sony','ilce-','zv-','ilme-','alpha']):
-                continue
-            name=fix_arabic(name,link,val)
-            if not val(name):
-                log.info(f'[Abdulwahed] REJECTED ({pt}): "{name[:70]}"')
-                continue
-            # Get price
-            price=None
-            for el in card.select('span,p'):
-                p=pparse(tr_east(el.get_text(strip=True)))
-                if p and 100<p<200000: price=p; break
-            products.append({'name':name,'price':price,'availability':'In Stock','url':link})
-        except Exception as e: log.debug(f'[Abdulwahed] {e}')
+            log.debug(f'[Abdulwahed] query "{q}" error: {e}')
+        time.sleep(0.5)
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
 def parse_amazon(pt):
