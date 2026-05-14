@@ -62,8 +62,9 @@ NON_CAM = [
     'tripod','bag','strap','battery','charger','memory card','sd card',
     'cf card','cfexpress','flash','filter','cleaning','lens cap','lens hood',
     'usb dock','dock','screen protector','carrying case',
-    'condenser','cage','shooting grip','smallrig','tilta',
+    'condenser','cage','smallrig','tilta',
     'monitor','hdmi','softbox','diffuser','light stand',
+    'microphone','wireless mic',
     # Specific excluded models
     'zv-1a',
 ]
@@ -86,6 +87,7 @@ CAM_MODELS_RE = [
     r'\brx[0-9]',
     r'\balpha\s+1\b',
     r'\balpha\s+a?\d',
+    r'\balpha\s+7\s*(iv|v|iii|ii)?\b',   # Alpha 7 IV, Alpha 7 V etc
     r'\bvenice\b',          # Sony VENICE
     r'\bburano\b',          # Sony BURANO 8K
     r'\bfs[57]\b',          # FS5, FS7
