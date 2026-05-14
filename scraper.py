@@ -502,16 +502,14 @@ def parse_abdulwahed(pt):
     base_url=URLS[pt]['abdulwahed']
     products=[]; seen=set()
     log.info(f'[Abdulwahed] clicking Sony filter ({pt})')
-    # Use ZenRows JS instructions to click the Sony brand checkbox (input#brand-107)
-    # then wait for the page to re-render with Sony-only products
-    import json as _json
+    import json as _json, requests as _req
+    ZENROWS_KEY=os.environ.get('ZENROWS_API_KEY','')
+    # Click Sony checkbox and wait for JS re-render, then read product cards
     js_instructions=_json.dumps([
         {'wait': 2000},
         {'click': '#brand-107'},
-        {'wait': 4000},
+        {'wait': 5000},
     ])
-    import requests as _req
-    ZENROWS_KEY=os.environ.get('ZENROWS_API_KEY','')
     params={
         'apikey': ZENROWS_KEY,
         'url': base_url,
@@ -535,46 +533,49 @@ def parse_abdulwahed(pt):
         time.sleep(3)
     if not html:
         log.info(f'[Abdulwahed] {pt}: 0'); return products
-    # Parse the filtered page — products are now Sony-only in the HTML
-    from bs4 import BeautifulSoup as _BS
-    soup=_BS(html,'lxml')
-    # Extract from __NEXT_DATA__ JSON first (most reliable)
-    m=re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',html,re.DOTALL)
-    product_list=[]
-    if m:
+    # After click, read rendered product cards (NOT __NEXT_DATA__ which is static)
+    soup=BeautifulSoup(html,'lxml')
+    # Log a snippet to verify the filter was applied
+    reset_btn=soup.select_one('button[class*="bg-primary"]')
+    brand_checked=soup.select_one('input#brand-107[checked], input#brand-107.checked')
+    log.info(f'[Abdulwahed] reset_btn={bool(reset_btn)} brand_checked={bool(brand_checked)} html_len={len(html)}')
+    # Find product cards — they appear in the grid after filter is applied
+    # Abdulwahed uses img[alt] inside grid divs for product names
+    cards=soup.select('div[class*="grid"] a[href*="/en/"], main a[href*="/en/"]')
+    # Also try product card containers
+    if len(cards) < 3:
+        cards=soup.select('a[href*="abdulwahed.com/en/"]')
+    log.info(f'[Abdulwahed] found {len(cards)} links after click')
+    for card in cards:
         try:
-            data=_json.loads(m.group(1))
-            product_list=(data.get('props',{}).get('pageProps',{}).get('products') or [])
-        except Exception as e:
-            log.warning(f'[Abdulwahed] JSON parse error: {e}')
-    log.info(f'[Abdulwahed] found {len(product_list)} products in JSON after click')
-    # If JSON has fewer than expected, also try HTML cards
-    html_count=0
-    if len(product_list) < 5:
-        cards=soup.select('div[class*="grid"] > div, [class*="product-card"]')
-        log.info(f'[Abdulwahed] fallback HTML cards: {len(cards)}')
-    for item in product_list:
-        try:
-            brand=(item.get('option_text_brand') or [''])[0]
-            if brand.lower()!='sony': continue
-            name_list=item.get('name') or []
-            name=name_list[0] if name_list else ''
-            if not name or len(name)<5: continue
-            if ' + ' in name: name=name.split(' + ')[0].strip()
-            name=fix_arabic(name,'',val)
-            if not val(name):
-                log.info(f'[Abdulwahed] REJECTED by val ({pt}): "{name[:80]}"')
-                continue
-            rewrite=item.get('rewrite_url','')
-            link=f"https://www.abdulwahed.com/en/{rewrite}" if rewrite else ''
+            link=card.get('href','').strip()
+            if not link.startswith('http'): link='https://www.abdulwahed.com'+link
+            # Filter out nav/menu links — product URLs contain category slugs
+            if not re.search(r'/en/[a-z].*-[a-z0-9]', link): continue
             if link in seen: continue
             seen.add(link)
-            prices=item.get('prices_with_tax',{})
-            price=prices.get('discounted_price') or prices.get('price') or prices.get('original_price')
-            try: price=float(price) if price else None
-            except: price=None
+            # Get name from img alt or text
+            img=card.select_one('img[alt]')
+            name=img.get('alt','').strip() if img else ''
+            if not name:
+                name=card.get_text(strip=True)[:80]
+            if not name or len(name)<5: continue
+            if ' + ' in name: name=name.split(' + ')[0].strip()
+            # Check Sony brand
+            name_lower=name.lower()
+            if not any(s in name_lower for s in ['sony','ilce-','zv-','ilme-','alpha']):
+                continue
+            name=fix_arabic(name,link,val)
+            if not val(name):
+                log.info(f'[Abdulwahed] REJECTED ({pt}): "{name[:70]}"')
+                continue
+            # Get price
+            price=None
+            for el in card.select('span,p'):
+                p=pparse(tr_east(el.get_text(strip=True)))
+                if p and 100<p<200000: price=p; break
             products.append({'name':name,'price':price,'availability':'In Stock','url':link})
-        except Exception as e: log.debug(f'[Abdulwahed] item error: {e}')
+        except Exception as e: log.debug(f'[Abdulwahed] {e}')
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
 def parse_amazon(pt):
