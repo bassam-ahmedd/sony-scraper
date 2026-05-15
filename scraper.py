@@ -931,12 +931,20 @@ def cam_score(a,b):
         # Match focal range: 16-50mm or 16 50mm (slug-derived)
         m=re.search(r'(\d{2,3}[-\s]\d{2,3}\s*mm)',n)
         if m:
-            fl=re.sub(r'\s+','-',m.group(1).strip())  # normalize "16 50mm" → "16-50mm"
-            if any(x in n for x in ['with lens','with '+m.group(1)[:6],'kit','mm lens',' lens ',' oss']):
+            # Normalize: '28-70 mm' → '28-70mm', '16 50mm' → '16-50mm'
+            raw=m.group(1).strip()
+            # if space before mm only (e.g. '28-70 mm'), remove the space
+            fl=re.sub(r'(\d)\s+mm','\\1mm',raw)  # '28-70 mm' → '28-70mm'
+            fl=re.sub(r'(\d)\s+(\d)','\\1-\\2',fl)  # '16 50mm' → '16-50mm'
+            has_lens_kw=any(x in n for x in ['with lens','with '+m.group(1)[:6],'kit','mm lens',' lens ',' oss',' gm',' g lens'])
+            # also treat as kit if an aperture directly follows the focal range
+            after=n[n.find(m.group(1))+len(m.group(1)):]
+            has_aperture=bool(re.search(r'^\s*f[/\s]?\d',after))
+            if has_lens_kw or has_aperture:
                 return fl
         # Single focal length with lens keyword
         m2=re.search(r'(\d{2,3}\s*mm)',n)
-        if m2 and any(x in n for x in ['with lens','kit',' lens ']):
+        if m2 and any(x in n for x in ['with lens','kit',' lens ',' gm ',' oss ']):
             return re.sub(r'\s+','',m2.group(1))
         return None
 
@@ -953,8 +961,22 @@ def cam_score(a,b):
     if a_body and b_has_kit: return 0
     if b_body and a_has_kit: return 0
 
-    # HARD RULE: different kit lenses = no match (18-135mm ≠ 16-50mm)
+    # HARD RULE: different kit lenses = no match (18-135mm != 16-50mm)
     if a_kit_lens and b_kit_lens and a_kit_lens!=b_kit_lens: return 0
+
+    # HARD RULE: one has a hardware bundle extra, the other doesn't
+    BUNDLE_EXTRAS=['xlr handle','xlr kit','shooting grip','wireless remote','microphone kit',
+                   'creator kit','vlogger kit','handle unit']
+    a_extras=[x for x in BUNDLE_EXTRAS if x in na]
+    b_extras=[x for x in BUNDLE_EXTRAS if x in nb]
+    if a_extras!=b_extras: return 0
+
+    # HARD RULE: a1 vs a1 II (a1m2) are different generations
+    a_has_a1m2=bool(re.search(r'\ba1\s*m2\b|\bilce-1m2\b',na))
+    b_has_a1m2=bool(re.search(r'\ba1\s*m2\b|\bilce-1m2\b',nb))
+    a_has_a1_bare=bool(re.search(r'\ba1\b',na)) and not a_has_a1m2
+    b_has_a1_bare=bool(re.search(r'\ba1\b',nb)) and not b_has_a1m2
+    if (a_has_a1m2 and b_has_a1_bare) or (b_has_a1m2 and a_has_a1_bare): return 0
 
     # Base score
     score=100
