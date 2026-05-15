@@ -532,8 +532,13 @@ def parse_abdulwahed(pt):
                 if ' + ' in name: name = name.split(' + ')[0].strip()
                 sku = p.get('sku','')
                 if isinstance(sku, list): sku = sku[0] if sku else ''
-                link = p.get('url','') or f"https://www.abdulwahed.com/en/{p.get('url_key','')}"
+                # Use direct product URL from search API (store.awahed.com or abdulwahed.com)
+                link = p.get('url','')
                 if isinstance(link, list): link = link[0] if link else ''
+                if not link:
+                    url_key = p.get('url_key','')
+                    if isinstance(url_key, list): url_key = url_key[0] if url_key else ''
+                    link = f"https://www.abdulwahed.com/en/{url_key}" if url_key else ''
                 key = sku or name
                 if key in seen: continue
                 seen.add(key)
