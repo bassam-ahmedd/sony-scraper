@@ -198,7 +198,7 @@ def pparse(text):
         clean=n.replace(',','').replace('،','').split('.')[0]
         try:
             v=float(clean)
-            if v>100: return v
+            if 100 < v < 200000: return v  # cap at 200k SAR — higher values are parsing artifacts
         except: continue
     return None
 
@@ -852,6 +852,24 @@ def models_match(ma,mb):
     if ma&mb: return True
     if 'a7' in ma and any(m.startswith('a7') for m in mb): return True
     if 'a7' in mb and any(m.startswith('a7') for m in ma): return True
+    # ILCE code cross-matching: ilce-7rm6 ↔ a7r6, ilce-7rm5 ↔ a7r5, etc.
+    def ilce_to_model(s):
+        m=re.match(r'ilce-7r?m(\d)',s)
+        if m: return f'a7r{m.group(1)}'
+        m=re.match(r'ilce-7sm(\d)',s)
+        if m: return f'a7s{m.group(1)}'
+        m=re.match(r'ilce-7cm(\d)',s)
+        if m: return f'a7c{m.group(1)}'
+        m=re.match(r'ilce-7m(\d)',s)
+        if m: return f'a7{m.group(1)}'
+        if re.match(r'ilce-7cr',s): return 'a7cr'
+        return None
+    for x in ma:
+        eq=ilce_to_model(x)
+        if eq and eq in mb: return True
+    for x in mb:
+        eq=ilce_to_model(x)
+        if eq and eq in ma: return True
     return False
 
 def cam_score(a,b):
@@ -859,8 +877,10 @@ def cam_score(a,b):
 
     def extract_models(n):
         # Normalize roman numerals to digits
-        n=re.sub(r'\biii\b','3',n); n=re.sub(r'\biv\b','4',n)
-        n=re.sub(r'\bv\b(?!\w)','5',n); n=re.sub(r'\bii\b','2',n)
+        n=re.sub(r'\bviii\b','8',n); n=re.sub(r'\bvii\b','7',n)
+        n=re.sub(r'\bvi\b','6',n); n=re.sub(r'\biv\b','4',n)
+        n=re.sub(r'\biii\b','3',n); n=re.sub(r'\bii\b','2',n)
+        n=re.sub(r'\bv\b(?!\w)','5',n)
         # Also handle when roman numerals are directly appended (a7v, a7iv, a7iii)
         n=re.sub(r'\ba7v\b','a75',n); n=re.sub(r'\ba7iv\b','a74',n)
         n=re.sub(r'\ba7iii\b','a73',n); n=re.sub(r'\ba7ii\b','a72',n)
@@ -905,6 +925,9 @@ def cam_score(a,b):
         for m in re.finditer(r'\ba6[0-9]{3}[a-z]?\b',n): models.add(m.group(0))
         # a1
         for m in re.finditer(r'\ba1\b',n): models.add('a1')
+        # a7CR (no generation number — standalone model)
+        if re.search(r'\ba7cr\b',n): models.add('a7cr')
+        if re.search(r'\bilce-7cr\b',n): models.add('a7cr')
         # ZV models (after normalization)
         for m in re.finditer(r'\bzv-1gen\d\b',n): models.add(m.group(0))
         if re.search(r'\bzv-1f\b',n): models.add('zv-1f')
@@ -928,16 +951,23 @@ def cam_score(a,b):
 
     # Extract kit lens from name (e.g. "with 28-60mm", "with 16-50mm", "18-135mm lens")
     def kit_lens(n):
+        # Normalize OSS II / OSS generation before focal extraction
+        # Only tag with gen2 when explicit "OSS II" / "OSS 2" marker present.
+        # Plain "OSS" or no OSS = no tag (matches both gens), so gen1 stores
+        # (Amazon, CamTime, AlamCam) that just say "16-50mm Lens" still match.
+        n_oss=n
+        if re.search(r'16-50.*oss\s+2\b|16-50.*oss\s*ii\b|16-50.*oss\s*mark\s*2\b|pz\s*16-50.*ii\b|e pz 16-50.*ii\b|16-50mm\s+f[/\d\.\s-]+ii\b',n_oss):
+            n_oss=re.sub(r'16-50\s*mm','16-50mm_gen2',n_oss)
+        # No else — plain OSS or no-OSS stays untagged so it can match either gen
+        n=n_oss
         # Match focal range: 16-50mm or 16 50mm (slug-derived)
-        m=re.search(r'(\d{2,3}[-\s]\d{2,3}\s*mm)',n)
+        m=re.search(r'(\d{2,3}[-\s]\d{2,3}\s*mm(?:_gen\d)?)',n)
         if m:
-            # Normalize: '28-70 mm' → '28-70mm', '16 50mm' → '16-50mm'
             raw=m.group(1).strip()
-            # if space before mm only (e.g. '28-70 mm'), remove the space
-            fl=re.sub(r'(\d)\s+mm','\\1mm',raw)  # '28-70 mm' → '28-70mm'
-            fl=re.sub(r'(\d)\s+(\d)','\\1-\\2',fl)  # '16 50mm' → '16-50mm'
+            fl=re.sub(r'(\d)\s+mm','\\1mm',raw)
+            fl=re.sub(r'(\d)\s+(\d)','\\1-\\2',fl)
+            fl=re.sub(r'mm\s+gen','mm_gen',fl)  # normalize spacing in gen tag
             has_lens_kw=any(x in n for x in ['with lens','with '+m.group(1)[:6],'kit','mm lens',' lens ',' oss',' gm',' g lens'])
-            # also treat as kit if an aperture directly follows the focal range
             after=n[n.find(m.group(1))+len(m.group(1)):]
             has_aperture=bool(re.search(r'^\s*f[/\s]?\d',after))
             if has_lens_kw or has_aperture:
@@ -946,6 +976,10 @@ def cam_score(a,b):
         m2=re.search(r'(\d{2,3}\s*mm)',n)
         if m2 and any(x in n for x in ['with lens','kit',' lens ',' gm ',' oss ']):
             return re.sub(r'\s+','',m2.group(1))
+        # Focal range WITHOUT mm suffix: e.g. "with 16-50 lens kit", "16-50 lens"
+        m3=re.search(r'(\d{2,3})[-\s](\d{2,3})(?!\s*mm)(?=\s*(lens|kit|oss|gm|zoom))',n)
+        if m3:
+            return f'{m3.group(1)}-{m3.group(2)}mm'
         return None
 
     a_kit_lens=kit_lens(na); b_kit_lens=kit_lens(nb)
@@ -977,6 +1011,17 @@ def cam_score(a,b):
     a_has_a1_bare=bool(re.search(r'\ba1\b',na)) and not a_has_a1m2
     b_has_a1_bare=bool(re.search(r'\ba1\b',nb)) and not b_has_a1m2
     if (a_has_a1m2 and b_has_a1_bare) or (b_has_a1m2 and a_has_a1_bare): return 0
+
+    # HARD RULE: explicit color conflict → different products
+    COLORS=['black','silver','white','blue','green','red']
+    a_colors=[c for c in COLORS if c in na]
+    b_colors=[c for c in COLORS if c in nb]
+    if a_colors and b_colors and set(a_colors)!=set(b_colors): return 0
+
+    # HARD RULE: kit vs bare (no body/kit info) → no match
+    # A kit with a specific lens should never match a bare product name
+    if a_has_kit and b_bare: return 0
+    if b_has_kit and a_bare: return 0
 
     # Base score
     score=100
