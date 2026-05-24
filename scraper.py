@@ -32,7 +32,8 @@ URLS = {
     'cameras': {
         'our_site':   ['https://ksa.amt.tv/camcorders-digital-cameras/photography/digital-camera.html?product_brand=1',
                        'https://ksa.amt.tv/camcorders-digital-cameras/video/digital-cinematography-cameras.html?product_brand=1'],
-        'qomra':      'https://qomra.pro/en/search?q=camera&filters[brand_id]=174800383&per_page=50',
+        'qomra':      ['https://qomra.pro/en/search?q=camera&filters[brand_id]=174800383&per_page=50',
+                       'https://qomra.pro/en/search?q=fx&filters[brand_id]=174800383&per_page=50'],
         'mestores':   'https://mestores.com/en_sa/cameras-accessories/cameras?page={page}&brand%5Bfilter%5D=SONY%2C1722',
         'abdulwahed': 'https://www.abdulwahed.com/en/photography-c-868/cameras-c-869',
         'amazon':     'https://www.amazon.sa/s?k=sony+alpha+camera&i=electronics&language=en_AE&rh=p_89%3ASony',
@@ -413,25 +414,28 @@ def parse_our_site(pt):
     log.info(f'[Our Site] {pt}: {len(products)}'); return products
 
 def parse_qomra(pt):
-    base=URLS[pt]['qomra']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; seen=set(); page=1
-    while page<=20:
-        url=f"{base}&page={page}" if page>1 else base
-        log.info(f'[Qomra] page {page}')
-        html=zenrows_js(url,wait=15000)
-        if html:
-            test=BeautifulSoup(html,'lxml')
-            if not test.select('custom-salla-product-card,s-product-card-entry'):
-                log.info('[Qomra] retrying with wait=20000')
-                html=zenrows_js(url,wait=20000)
-        if not html: break
-        results=salla_parse(html,'https://qomra.pro','Qomra',val)
-        new=[p for p in results if p['url'] not in seen]
-        for p in new: seen.add(p['url'])
-        products.extend(new)
-        log.info(f'[Qomra] page {page}: {len(new)} new items (total {len(products)})')
-        if not new: break  # Stop when no new items found
-        page+=1
+    url_config=URLS[pt]['qomra']; val=is_lens if pt=='lenses' else is_camera
+    base_urls=url_config if isinstance(url_config,list) else [url_config]
+    products=[]; seen=set()
+    for base in base_urls:
+        page=1
+        while page<=20:
+            url=f"{base}&page={page}" if page>1 else base
+            log.info(f'[Qomra] page {page}')
+            html=zenrows_js(url,wait=15000)
+            if html:
+                test=BeautifulSoup(html,'lxml')
+                if not test.select('custom-salla-product-card,s-product-card-entry'):
+                    log.info('[Qomra] retrying with wait=20000')
+                    html=zenrows_js(url,wait=20000)
+            if not html: break
+            results=salla_parse(html,'https://qomra.pro','Qomra',val)
+            new=[p for p in results if p['url'] not in seen]
+            for p in new: seen.add(p['url'])
+            products.extend(new)
+            log.info(f'[Qomra] page {page}: {len(new)} new items (total {len(products)})')
+            if not new: break
+            page+=1
     log.info(f'[Qomra] {pt}: {len(products)}'); return products
 
 def parse_mestores(pt):
@@ -497,6 +501,42 @@ def parse_mestores(pt):
         log.info(f'[Me Stores] found {nf} new valid on page {page_num}, {nrej} rejected')
         # If page 2 returns 0 new items, stop
         if nf==0 and page_num>1: break
+    # For cameras only: also scrape cinema/professional cameras via search
+    # FX2, FX3, FX6 etc. don't appear in the regular cameras category
+    if pt == 'cameras':
+        cinema_queries = ['sony fx cinema camera', 'sony ilme cinema']
+        for q in cinema_queries:
+            from urllib.parse import quote as _q
+            search_url = f'https://mestores.com/en_sa/?q={_q(q)}'
+            try:
+                html = zenrows_js(search_url, wait=12000, scroll=True)
+                if not html: continue
+                soup = BeautifulSoup(html, 'lxml')
+                anchors = [a for a in soup.select('a[href*="/en_sa/"]')
+                           if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
+                for a in anchors:
+                    link = a.get('href','').strip()
+                    if not link.startswith('http'): link = 'https://mestores.com' + link
+                    if link in seen: continue
+                    seen.add(link)
+                    name = ''
+                    for img in a.select('img[alt]'):
+                        alt = img.get('alt','').strip()
+                        if len(alt) >= 10: name = alt; break
+                    if not name:
+                        for el in a.select('h1,h2,h3,h4,[class*="name"]'):
+                            t = el.get_text(strip=True)
+                            if len(t) > 10: name = t; break
+                    if not name: continue
+                    name = fix_arabic(name, link, val)
+                    if not val(name): continue
+                    pe = a.select_one('[class*="priceAmount"],[class*="priceValue"]')
+                    price = pparse(tr_east(pe.get_text(strip=True))) if pe else None
+                    avail = detect_avail(a)
+                    products.append({'name':name,'price':price,'availability':avail,'url':link})
+                    log.info(f'[Me Stores] cinema extra: {name[:60]}')
+            except Exception as e:
+                log.debug(f'[Me Stores] cinema search error: {e}')
     log.info(f'[Me Stores] {pt}: {len(products)}'); return products
 
 def parse_abdulwahed(pt):
@@ -712,6 +752,21 @@ def parse_cameramix(pt):
         if not new and pt=='cameras': break  # cameras: stop when no new cameras found
         # lenses: continue through all pages (lenses scattered across /Sony pages)
         page+=1; time.sleep(1.5)
+    # For cameras: also search for cinema/FX cameras not in the main Sony brand page
+    if pt == 'cameras':
+        for search_term in ['sony fx2', 'sony fx3', 'sony fx6', 'sony fx9', 'sony fx30']:
+            try:
+                search_url = f'https://www.cameramix.com/index.php?route=product/search&search={search_term.replace(" ","+")}'
+                html2 = zenrows_std(search_url)
+                if not html2: html2 = zenrows_js(search_url, wait=8000)
+                if not html2: continue
+                results2 = opencart_parse(html2, 'https://www.cameramix.com', 'CameraMix', val)
+                for p in results2:
+                    if p['url'] not in seen:
+                        seen.add(p['url']); products.append(p)
+                        log.info(f'[CameraMix] cinema extra ({search_term}): {p["name"][:60]}')
+            except Exception as e:
+                log.debug(f'[CameraMix] cinema search error: {e}')
     log.info(f'[CameraMix] {pt}: {len(products)}'); return products
 
 def parse_pclub(pt):
@@ -724,6 +779,21 @@ def parse_pclub(pt):
         for p in results:
             if p['url'] not in seen:
                 seen.add(p['url']); products.append(p)
+    # For cameras: also search for cinema/FX cameras not in the main Sony category page
+    if pt == 'cameras':
+        for search_term in ['sony fx2', 'sony fx3', 'sony fx6', 'sony fx9', 'sony fx30']:
+            try:
+                search_url = f'https://pclub.com.sa/index.php?route=product/search&search={search_term.replace(" ","+")}&limit=25'
+                html2 = plain(search_url)
+                if not html2: html2 = zenrows_js(search_url, wait=8000)
+                if not html2: continue
+                results2 = opencart_parse(html2, 'https://pclub.com.sa', 'PClub', val)
+                for p in results2:
+                    if p['url'] not in seen:
+                        seen.add(p['url']); products.append(p)
+                        log.info(f'[PClub] cinema extra ({search_term}): {p["name"][:60]}')
+            except Exception as e:
+                log.debug(f'[PClub] cinema search error: {e}')
     log.info(f'[PClub] {pt}: {len(products)}'); return products
 
 def parse_camtime(pt):
