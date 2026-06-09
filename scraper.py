@@ -27,7 +27,8 @@ URLS = {
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D8%A7%D9%84%D8%B9%D8%AF%D8%B3%D8%A7%D8%AA-%D9%88%D9%85%D9%84%D8%AD%D9%82%D8%A7%D8%AA%D9%87%D8%A71778543834?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+fe+lens&limit=100',
-        'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
+        'camerabox':  ['https://camerabox.com.sa/en/sony/brand-1380282655',
+                       'https://camerabox.com.sa/en/offers/brand-1380282655'],
     },
     'cameras': {
         'our_site':   ['https://ksa.amt.tv/camcorders-digital-cameras/photography/digital-camera.html?product_brand=1',
@@ -42,7 +43,8 @@ URLS = {
         'pclub':      'https://pclub.com.sa/sony-1-10?limit=100',
         'camtime':    'https://camtime.sa/%D9%83%D8%A7%D9%85%D9%8A%D8%B1%D8%A7%D8%AA-%D8%A7%D9%84%D8%AA%D8%B5%D9%88%D9%8A%D8%B11778543751?fm=10',
         'alamcam':    'https://alamcam.sa/index.php?route=product/search&search=sony+camera&limit=100',
-        'camerabox':  'https://camerabox.com.sa/en/sony/brand-1380282655',
+        'camerabox':  ['https://camerabox.com.sa/en/sony/brand-1380282655',
+                       'https://camerabox.com.sa/en/offers/brand-1380282655'],
     },
 }
 
@@ -68,6 +70,11 @@ NON_CAM = [
     'microphone','wireless mic',
     # Specific excluded models
     'zv-1a',
+    # Accessory terms that embed camera model names in SKUs (P1.R)
+    'plate','nano plate','base plate','baseplate','top plate',
+    'quick release','v-mount plate','battery plate','dummy battery','adapter plate',
+    'vertical grip','battery grip','grip for','l-bracket','l bracket',
+    'remote commander','grip extension','meike grip','cage',
 ]
 CAM_MODELS_RE = [
     r'\ba7\s*(r|s|c|cm)?\s*(ii+|iv|v|[2-9])?\b',
@@ -104,8 +111,10 @@ LENS_ID = [' lens','g master','gm ','zeiss','vario-tessar',
            'sony fe ','sony e ']
 
 def norm(s):
-    # Normalize Greek alpha α → a for Sony model matching (α7 → a7)
+    # Normalize Greek alpha and unicode dashes/quotes (P0.0)
     s = s.replace('α','a').replace('Α','A')
+    s = re.sub(r'[\u2010-\u2015\u2212\u2013\u2014]', '-', s)  # en/em-dash → hyphen
+    s = s.replace('\u2019',"'").replace('\u2018',"'")
     return s.lower().strip()
 
 def tr_east(s):
@@ -127,7 +136,16 @@ def is_lens(name):
 
 def is_camera(name):
     n=norm(name)
-    if any(k in n for k in NON_CAM): return False
+    has_model=any(re.search(p,n) for p in CAM_MODELS_RE)
+    # P1.G: only block NON_CAM when no camera model present
+    if not has_model and any(k in n for k in NON_CAM): return False
+    # Block hard accessory terms even with a model (P1.R)
+    if any(k in n for k in ['vertical grip','battery grip','baseplate','base plate',
+                             'cage','top plate','nano plate','l-bracket','dummy battery',
+                             'adapter plate','quick release']): return False
+    # P1.H: every model mention is AFTER 'for/fits/compatible' → accessory listing cameras
+    compat=re.search(r'\b(for|fits|compatible with|suitable for)\b',n)
+    if compat and not any(re.search(p,n[:compat.start()]) for p in CAM_MODELS_RE): return False
     is_pure_lens=(bool(re.search(r'\d+\s*mm',n)) and
                   bool(re.search(r'\bf/?[\s]?\d+\.?\d*',n)) and
                   any(k in n for k in [' lens','g master','vario-tessar','fe pz','e pz']) and
@@ -452,13 +470,19 @@ def parse_mestores(pt):
         if not html:
             continue
         soup=BeautifulSoup(html,'lxml')
+        # Bucket U: accept slug-only product URLs like /en_sa/sony-fx2-full-frame-cinema-line-camera
+        _CAT={'cameras','lenses','cameras-accessories','en_sa','search','catalogsearch','result'}
+        def _ms_prod(href):
+            m=re.search(r'/en_sa/([a-z0-9-]+)/?$',href)
+            if not m: return False
+            sl=m.group(1)
+            if sl in _CAT: return False
+            if re.search(r'-\d+$',sl): return True
+            return sl.count('-')>=3
         anchors=soup.select('a[href*="/en_sa/"]')
-        anchors=[a for a in anchors if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
+        anchors=[a for a in anchors if _ms_prod(a.get('href',''))]
         if not anchors:
-            anchors=[a for a in soup.select('a[href]')
-                     if '/en_sa/' in a.get('href','') and
-                     re.search(r'-\d{3,}', a.get('href','')) and
-                     a.get('href','').count('/') >= 3]
+            anchors=[a for a in soup.select('a[href]') if _ms_prod(a.get('href',''))]
         log.info(f'[Me Stores] found {len(anchors)} anchors on page {page_num}')
         if not anchors:
             if page_num==1:
@@ -482,7 +506,8 @@ def parse_mestores(pt):
                         t=el.get_text(strip=True)
                         if len(t)>10: name=t; break
                 if not name: continue
-                if '|' in name: name = name.split('|')[0].strip()
+                # P0.C: join all pipe segments (preserves SKU, color, kit)
+                if '|' in name: name = ' '.join(seg.strip() for seg in name.split('|') if seg.strip())
                 if ' + ' in name: name = name.split(' + ')[0].strip()
                 name=fix_arabic(name,link,val)
                 if not val(name):
@@ -512,8 +537,7 @@ def parse_mestores(pt):
                 html = zenrows_js(search_url, wait=12000, scroll=True)
                 if not html: continue
                 soup = BeautifulSoup(html, 'lxml')
-                anchors = [a for a in soup.select('a[href*="/en_sa/"]')
-                           if re.search(r'/en_sa/[a-z0-9-]+-\d+', a.get('href',''))]
+                anchors = [a for a in soup.select('a[href*="/en_sa/"]') if _ms_prod(a.get('href',''))]
                 for a in anchors:
                     link = a.get('href','').strip()
                     if not link.startswith('http'): link = 'https://mestores.com' + link
@@ -568,7 +592,8 @@ def parse_abdulwahed(pt):
                 if not name or len(name) < 5: continue
                 brand = p.get('brand','')
                 if isinstance(brand, list): brand = brand[0] if brand else ''
-                if brand.lower() not in ('sony',''): continue
+                # P2.I: accept 'SonyGodox' bundles — split runs after
+                if brand and 'sony' not in brand.lower(): continue
                 if ' + ' in name: name = name.split(' + ')[0].strip()
                 sku = p.get('sku','')
                 if isinstance(sku, list): sku = sku[0] if sku else ''
@@ -883,19 +908,32 @@ def parse_alamcam(pt):
     log.info(f'[AlamCam] {pt}: {len(products)}'); return products
 
 def parse_camerabox(pt):
-    url=URLS[pt]['camerabox']; val=is_lens if pt=='lenses' else is_camera
-    products=[]; log.info(f'[CameraBox] fetching with scroll')
-    try:
-        html=zenrows_js(url,wait=8000,scroll=True)
-        if html:
-            results=salla_parse(html,'https://camerabox.com.sa','CameraBox',val)
-            if not results:
-                log.info('[CameraBox] retrying with wait=15000')
-                html=zenrows_js(url,wait=15000,scroll=True)
+    url_config=URLS[pt]['camerabox']; val=is_lens if pt=='lenses' else is_camera
+    base_urls=url_config if isinstance(url_config,list) else [url_config]
+    products=[]; seen=set()
+    for base in base_urls:
+        page=1
+        while page<=5:
+            url=f'{base}?page={page}' if page>1 else base
+            log.info(f'[CameraBox] fetching {url[-50:]} p{page}')
+            try:
+                html=zenrows_js(url,wait=8000,scroll=True)
                 if html:
                     results=salla_parse(html,'https://camerabox.com.sa','CameraBox',val)
-            products.extend(results)
-    except Exception as e: log.error(f'[CameraBox] {e}')
+                    if not results and page==1:
+                        log.info('[CameraBox] retrying with wait=15000')
+                        html=zenrows_js(url,wait=15000,scroll=True)
+                        if html: results=salla_parse(html,'https://camerabox.com.sa','CameraBox',val)
+                    new=[p for p in results if p['url'] not in seen]
+                    for p in new: seen.add(p['url'])
+                    products.extend(new)
+                    for p in results[:3]: log.info(f'[CameraBox] candidate: {p["name"][:70]}')
+                    log.info(f'[CameraBox] returning {len(new)} valid items')
+                    if not new: break
+                else:
+                    break
+            except Exception as e: log.error(f'[CameraBox] {e}'); break
+            page+=1; time.sleep(2)
     log.info(f'[CameraBox] {pt}: {len(products)}'); return products
 
 # ── Matching ──────────────────────────────────────────────────────────────────
@@ -920,8 +958,12 @@ def lens_score(a,b):
 
 def models_match(ma,mb):
     if ma&mb: return True
-    if 'a7' in ma and any(m.startswith('a7') for m in mb): return True
-    if 'a7' in mb and any(m.startswith('a7') for m in ma): return True
+    # P0.D: bare 'a7' matches ONLY 'a7' or 'a7<digit>', NOT a7r/a7s/a7c
+    def _a7compat(token, other):
+        if token!='a7': return False
+        return any(o=='a7' or re.fullmatch(r'a7\d?',o) for o in other)
+    if _a7compat('a7',mb) and 'a7' in ma: return True
+    if _a7compat('a7',ma) and 'a7' in mb: return True
     # ILCE code cross-matching: ilce-7rm6 ↔ a7r6, ilce-7rm5 ↔ a7r5, etc.
     def ilce_to_model(s):
         m=re.match(r'ilce-7r?m(\d)',s)
@@ -933,6 +975,10 @@ def models_match(ma,mb):
         m=re.match(r'ilce-7m(\d)',s)
         if m: return f'a7{m.group(1)}'
         if re.match(r'ilce-7cr',s): return 'a7cr'
+        m=re.match(r'ilce-9m(\d)',s)  # P2.O(a): ilce-9m3 → a93
+        if m: return f'a9{m.group(1)}'
+        m=re.match(r'ilce-1m(\d)',s)   # P1.M: ilce-1m2 → a1gen2
+        if m: return f'a1gen{m.group(1)}'
         return None
     for x in ma:
         eq=ilce_to_model(x)
@@ -943,14 +989,42 @@ def models_match(ma,mb):
     return False
 
 def cam_score(a,b):
+    # Reject accessories that shouldn't reach the matcher (P1.G/H guard)
+    if not is_camera(a) or not is_camera(b): return 0
     na,nb=norm(a),norm(b)
 
     def extract_models(n):
         # Normalize roman numerals to digits
+        # Pre-roman normalization (P1.F/M/P, P2.N, P2.O.b/c)
+        n=re.sub(r'\bzv[\s_-]*1\b','zv-1',n)             # zv1/zv 1 → zv-1
+        n=re.sub(r'\bzv[\s_-]*e10\b','zv-e10',n)         # zv e10 → zv-e10
+        n=re.sub(r'\ba7c\s*-?\s*r\b','a7cr',n)           # P2.N: a7cr first
+        n=re.sub(r'\ba7([rsc])m(\d)\b',r'a7\1\2',n)     # a7rm5→a7r5 etc
+        n=re.sub(r'\ba7cm(\d)\b',r'a7c\1',n)             # a7cm2→a7c2
+        # Gen tags BEFORE roman→digit
+        n=re.sub(r'\bzv-1\s*m2\b','zv-1gen2',n)
+        n=re.sub(r'\bzv-1\s*ii\b','zv-1gen2',n)           # before roman
+        n=re.sub(r'\bzv-e10\s*m2k?\b','zv-e10gen2',n)     # ZV-E10M2K (P1.P)
+        n=re.sub(r'\bzv-e10\s*ii\b','zv-e10gen2',n)
+        n=re.sub(r'\bilce-1m2\b','a1gen2',n)              # P1.M
+        n=re.sub(r'\ba1\s*m2\b','a1gen2',n)
+        # Roman numerals — vi before iv before v
         n=re.sub(r'\bviii\b','8',n); n=re.sub(r'\bvii\b','7',n)
         n=re.sub(r'\bvi\b','6',n); n=re.sub(r'\biv\b','4',n)
         n=re.sub(r'\biii\b','3',n); n=re.sub(r'\bii\b','2',n)
         n=re.sub(r'\bv\b(?!\w)','5',n)
+        # Post-roman gen forms
+        n=re.sub(r'\bzv-1\s+2\b','zv-1gen2',n)
+        n=re.sub(r'\bzv-1f\b','zv-1f',n)
+        n=re.sub(r'\bzv-1\b(?!gen|f|\s*m?2)','zv-1gen1',n)
+        n=re.sub(r'\bzv-e10\s+2\b','zv-e10gen2',n)
+        n=re.sub(r'\bzv-e10\b(?!gen|\s*m?2)','zv-e10gen1',n)
+        n=re.sub(r'\b(?:alpha\s*)?1\s+2\b','a1gen2',n)   # Alpha 1 II → 1 2
+        n=re.sub(r'\ba1\s+2\b','a1gen2',n)
+        n=re.sub(r'\ba1\b(?!gen|\s*m?2)','a1gen1',n)
+        n=re.sub(r'\ba7c\b(?![\dr])','a7c1',n)            # bare a7c = gen1
+        n=re.sub(r'\b(a6\d00)[ml]\b',r'\1',n)            # P2.O.b: a6600m→a6600
+        n=re.sub(r'(?:full[-\s]?frame\s*)?35\s*mm(\s*sensor)?',' ',n)  # strip sensor 35mm
         # Also handle when roman numerals are directly appended (a7v, a7iv, a7iii)
         n=re.sub(r'\ba7v\b','a75',n); n=re.sub(r'\ba7iv\b','a74',n)
         n=re.sub(r'\ba7iii\b','a73',n); n=re.sub(r'\ba7ii\b','a72',n)
@@ -993,11 +1067,17 @@ def cam_score(a,b):
         for m in re.finditer(r'\ba9\s*(\d?)\b',n): models.add('a9'+(m.group(1) or ''))
         # a6xxx models
         for m in re.finditer(r'\ba6[0-9]{3}[a-z]?\b',n): models.add(m.group(0))
-        # a1
-        for m in re.finditer(r'\ba1\b',n): models.add('a1')
-        # a7CR (no generation number — standalone model)
+        # a1 gen (P1.M)
+        for tok in ('a1gen1','a1gen2'):
+            if re.search(rf'\b{tok}\b',n): models.add(tok)
+        if not any('a1gen' in m for m in models) and re.search(r'\ba1\b',n): models.add('a1gen1')
+        # a7CR
         if re.search(r'\ba7cr\b',n): models.add('a7cr')
         if re.search(r'\bilce-7cr\b',n): models.add('a7cr')
+        # ZV gen tokens (P1.F, P1.P)
+        for m in re.finditer(r'\bzv-1gen\d\b',n): models.add(m.group(0))
+        if re.search(r'\bzv-1f\b',n): models.add('zv-1f')
+        for m in re.finditer(r'\bzv-e10gen\d\b',n): models.add(m.group(0))
         # ZV models (after normalization)
         for m in re.finditer(r'\bzv-1gen\d\b',n): models.add(m.group(0))
         if re.search(r'\bzv-1f\b',n): models.add('zv-1f')
@@ -1006,7 +1086,8 @@ def cam_score(a,b):
             mv=m.group(0)
             if 'gen' not in mv: models.add(mv)  # other ZV models like zv-e1
         # FX models (cinema line)
-        for m in re.finditer(r'\bfx[23679][a0]?\b',n): models.add(m.group(0))
+        # P1.R: FX standalone token only — not inside NANOFX6, SmallRigFX6 etc
+        for m in re.finditer(r'(?<![a-z0-9])fx([23679][a0]?)(?![a-z0-9])',n): models.add('fx'+m.group(1))
         for m in re.finditer(r'\bfx9\b',n): models.add('fx9')
         for m in re.finditer(r'\bpxw-\w+',n): models.add(m.group(0))
         # ILCE / ILME
@@ -1053,8 +1134,10 @@ def cam_score(a,b):
         return None
 
     a_kit_lens=kit_lens(na); b_kit_lens=kit_lens(nb)
-    a_body=any(x in na for x in ['body only','body-only','(body only)','body ('])
-    b_body=any(x in nb for x in ['body only','body-only','(body only)','body ('])
+    def _is_body(n):
+        if any(x in n for x in ['body only','body-only','(body only)','body (','camera body']): return True
+        return bool(re.search(r'\bbody\b\s*$',n))   # §9.7
+    a_body=_is_body(na); b_body=_is_body(nb)
     a_has_kit=bool(a_kit_lens)
     b_has_kit=bool(b_kit_lens)
     # "bare" name = no body/kit info at all (just model name, no lens or body-only)
@@ -1068,12 +1151,19 @@ def cam_score(a,b):
     # HARD RULE: different kit lenses = no match (18-135mm != 16-50mm)
     if a_kit_lens and b_kit_lens and a_kit_lens!=b_kit_lens: return 0
 
-    # HARD RULE: one has a hardware bundle extra, the other doesn't
-    BUNDLE_EXTRAS=['xlr handle','xlr kit','shooting grip','wireless remote','microphone kit',
-                   'creator kit','vlogger kit','handle unit']
-    a_extras=[x for x in BUNDLE_EXTRAS if x in na]
-    b_extras=[x for x in BUNDLE_EXTRAS if x in nb]
-    if a_extras!=b_extras: return 0
+    # HARD RULE: bundle extras — canonicalized to concepts (BUG-T)
+    _EC={'xlr_handle':['xlr handle unit','xlr handle','handle unit','xlr-h1','xlr h1','xlr kit'],
+         'shooting_grip':['shooting grip','gp-vpt','vpt2bt','grip kit'],
+         'wireless_remote':['wireless remote','remote commander'],
+         'mic_kit':['microphone kit','ecm-w','wireless mic kit'],
+         'creator_kit':['creator kit','vlogger kit','vlogging kit'],}
+    def _extras(n):
+        s=set()
+        for c,al in _EC.items():
+            if any(a in n for a in al): s.add(c)
+        return s
+    ae,be=_extras(na),_extras(nb)
+    if ae!=be: return 0
 
     # HARD RULE: a1 vs a1 II (a1m2) are different generations
     a_has_a1m2=bool(re.search(r'\ba1\s*m2\b|\bilce-1m2\b',na))
