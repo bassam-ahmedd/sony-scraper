@@ -508,7 +508,9 @@ def parse_mestores(pt):
                 if not name: continue
                 # P0.C: join all pipe segments (preserves SKU, color, kit)
                 if '|' in name: name = ' '.join(seg.strip() for seg in name.split('|') if seg.strip())
-                if ' + ' in name: name = name.split(' + ')[0].strip()
+                # P2.I: split bundles before validation — handle ' + ', 'free gift', 'with'
+                for sep_pat in [r'\s+\+\s+', r'free\s+gift', r'\bفلاش\b']:
+                    name = re.split(sep_pat, name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
                 name=fix_arabic(name,link,val)
                 if not val(name):
                     nrej+=1
@@ -594,7 +596,9 @@ def parse_abdulwahed(pt):
                 if isinstance(brand, list): brand = brand[0] if brand else ''
                 # P2.I: accept 'SonyGodox' bundles — split runs after
                 if brand and 'sony' not in brand.lower(): continue
-                if ' + ' in name: name = name.split(' + ')[0].strip()
+                # P2.I: split bundles before validation — handle ' + ', 'free gift', 'with'
+                for sep_pat in [r'\s+\+\s+', r'free\s+gift', r'\bفلاش\b']:
+                    name = re.split(sep_pat, name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
                 sku = p.get('sku','')
                 if isinstance(sku, list): sku = sku[0] if sku else ''
                 # Build correct product URL: abdulwahed.com/en/product/{url_key}
@@ -779,7 +783,8 @@ def parse_cameramix(pt):
         page+=1; time.sleep(1.5)
     # For cameras: also search for cinema/FX cameras not in the main Sony brand page
     if pt == 'cameras':
-        for search_term in ['sony fx2', 'sony fx3', 'sony fx6', 'sony fx9', 'sony fx30']:
+        for search_term in ['sony fx2', 'sony fx3', 'sony fx6', 'sony fx9', 'sony fx30',
+                              'sony rx1r', 'sony rx100', 'sony rx10']:
             try:
                 search_url = f'https://www.cameramix.com/index.php?route=product/search&search={search_term.replace(" ","+")}'
                 html2 = zenrows_std(search_url)
@@ -806,7 +811,8 @@ def parse_pclub(pt):
                 seen.add(p['url']); products.append(p)
     # For cameras: also search for cinema/FX cameras not in the main Sony category page
     if pt == 'cameras':
-        for search_term in ['sony fx2', 'sony fx3', 'sony fx6', 'sony fx9', 'sony fx30']:
+        for search_term in ['sony fx2', 'sony fx3', 'sony fx6', 'sony fx9', 'sony fx30',
+                              'sony rx1r', 'sony rx100', 'sony rx10']:
             try:
                 search_url = f'https://pclub.com.sa/index.php?route=product/search&search={search_term.replace(" ","+")}&limit=25'
                 html2 = plain(search_url)
@@ -915,7 +921,7 @@ def parse_camerabox(pt):
         page=1
         while page<=5:
             url=f'{base}?page={page}' if page>1 else base
-            log.info(f'[CameraBox] fetching {url[-50:]} p{page}')
+            log.info(f'[CameraBox] p{page}: {url}')
             try:
                 html=zenrows_js(url,wait=8000,scroll=True)
                 if html:
@@ -966,13 +972,13 @@ def models_match(ma,mb):
     if _a7compat('a7',ma) and 'a7' in mb: return True
     # ILCE code cross-matching: ilce-7rm6 ↔ a7r6, ilce-7rm5 ↔ a7r5, etc.
     def ilce_to_model(s):
-        m=re.match(r'ilce-7r?m(\d)',s)
+        m=re.match(r'ilce-7rm(\d)',s)          # ILCE-7RM5→a7r5 (has R)
         if m: return f'a7r{m.group(1)}'
         m=re.match(r'ilce-7sm(\d)',s)
         if m: return f'a7s{m.group(1)}'
         m=re.match(r'ilce-7cm(\d)',s)
         if m: return f'a7c{m.group(1)}'
-        m=re.match(r'ilce-7m(\d)',s)
+        m=re.match(r'ilce-7m(\d)',s)             # ILCE-7M5→a75 (no R = bare a7)
         if m: return f'a7{m.group(1)}'
         if re.match(r'ilce-7cr',s): return 'a7cr'
         m=re.match(r'ilce-9m(\d)',s)  # P2.O(a): ilce-9m3 → a93
@@ -986,6 +992,14 @@ def models_match(ma,mb):
     for x in mb:
         eq=ilce_to_model(x)
         if eq and eq in ma: return True
+    # FX3A is a firmware variant of FX3 — treat as same model
+    _FX_COMPAT={'fx3a':'fx3','fx3':'fx3a'}
+    for x in ma:
+        y=_FX_COMPAT.get(x)
+        if y and y in mb: return True
+    for x in mb:
+        y=_FX_COMPAT.get(x)
+        if y and y in ma: return True
     return False
 
 def cam_score(a,b):
@@ -996,6 +1010,7 @@ def cam_score(a,b):
     def extract_models(n):
         # Normalize roman numerals to digits
         # Pre-roman normalization (P1.F/M/P, P2.N, P2.O.b/c)
+        n=re.sub(r'\bzv-e10m2k\b','zv-e10gen2',n)         # P1.P: glued form first
         n=re.sub(r'\bzv[\s_-]*1\b','zv-1',n)             # zv1/zv 1 → zv-1
         n=re.sub(r'\bzv[\s_-]*e10\b','zv-e10',n)         # zv e10 → zv-e10
         n=re.sub(r'\ba7c\s*-?\s*r\b','a7cr',n)           # P2.N: a7cr first
@@ -1024,7 +1039,7 @@ def cam_score(a,b):
         n=re.sub(r'\ba1\b(?!gen|\s*m?2)','a1gen1',n)
         n=re.sub(r'\ba7c\b(?![\dr])','a7c1',n)            # bare a7c = gen1
         n=re.sub(r'\b(a6\d00)[ml]\b',r'\1',n)            # P2.O.b: a6600m→a6600
-        n=re.sub(r'(?:full[-\s]?frame\s*)?35\s*mm(\s*sensor)?',' ',n)  # strip sensor 35mm
+        n=re.sub(r'35\s*mm(?:\s*(?:full[-\s]?frame|sensor))?',' ',n)  # P2.K: strip sensor/full-frame 35mm in any order
         # Also handle when roman numerals are directly appended (a7v, a7iv, a7iii)
         n=re.sub(r'\ba7v\b','a75',n); n=re.sub(r'\ba7iv\b','a74',n)
         n=re.sub(r'\ba7iii\b','a73',n); n=re.sub(r'\ba7ii\b','a72',n)
@@ -1067,6 +1082,10 @@ def cam_score(a,b):
         for m in re.finditer(r'\ba9\s*(\d?)\b',n): models.add('a9'+(m.group(1) or ''))
         # a6xxx models
         for m in re.finditer(r'\ba6[0-9]{3}[a-z]?\b',n): models.add(m.group(0))
+        # P1.E: RX family extraction
+        n_rx=re.sub(r'\bdsc[-\s]?rx','rx',n)
+        for m in re.finditer(r'\brx(100|10|1r|1)\s*m?(\d)\b',n_rx): models.add(f'rx{m.group(1)}-{m.group(2)}')
+        for m in re.finditer(r'\brx(100|10|1r|1)\b(?!\s*m?\d)',n_rx): models.add(f'rx{m.group(1)}')
         # a1 gen (P1.M)
         for tok in ('a1gen1','a1gen2'):
             if re.search(rf'\b{tok}\b',n): models.add(tok)
@@ -1118,7 +1137,7 @@ def cam_score(a,b):
             fl=re.sub(r'(\d)\s+mm','\\1mm',raw)
             fl=re.sub(r'(\d)\s+(\d)','\\1-\\2',fl)
             fl=re.sub(r'mm\s+gen','mm_gen',fl)  # normalize spacing in gen tag
-            has_lens_kw=any(x in n for x in ['with lens','with '+m.group(1)[:6],'kit','mm lens',' lens ',' oss',' gm',' g lens'])
+            has_lens_kw=any(x in n for x in ['with lens','with '+m.group(1)[:6],'kit','mm lens',' lens ',' oss',' gm',' g lens','full-frame','full frame'])
             after=n[n.find(m.group(1))+len(m.group(1)):]
             has_aperture=bool(re.search(r'^\s*f[/\s]?\d',after))
             if has_lens_kw or has_aperture:
@@ -1127,10 +1146,19 @@ def cam_score(a,b):
         m2=re.search(r'(\d{2,3}\s*mm)',n)
         if m2 and any(x in n for x in ['with lens','kit',' lens ',' gm ',' oss ']):
             return re.sub(r'\s+','',m2.group(1))
-        # Focal range WITHOUT mm suffix: e.g. "with 16-50 lens kit", "16-50 lens"
+        # Focal range WITHOUT mm suffix: e.g. "with 16-50 lens kit", ILCE-7M3K suffix
         m3=re.search(r'(\d{2,3})[-\s](\d{2,3})(?!\s*mm)(?=\s*(lens|kit|oss|gm|zoom))',n)
-        if m3:
-            return f'{m3.group(1)}-{m3.group(2)}mm'
+        if m3: return f'{m3.group(1)}-{m3.group(2)}mm'
+        # Trailing focal range at END of name = kit (e.g. ZV-E10M2K...16-50mm)
+        m4=re.search(r'(\d{2,3}-\d{2,3}mm(?:_gen\d)?)\s*$',n)
+        if m4: return m4.group(1)
+        # ILCE…K suffix implies a kit (e.g. ILCE-7M3K = a7 III with 28-70mm)
+        if re.search(r'\bilce-[\w]+k\b',n) and any(x in n for x in ['with','kit']): pass
+        # SEL SKU → focal range (P2.K)
+        _SEL={'sel2870':'28-70mm','selp1650':'16-50mm','sel1650':'16-50mm',
+              'sel2860':'28-60mm','sel24105':'24-105mm','sel70200':'70-200mm'}
+        for sel,fl in _SEL.items():
+            if sel in n.replace('-','').replace(' ',''): return fl
         return None
 
     a_kit_lens=kit_lens(na); b_kit_lens=kit_lens(nb)
@@ -1148,8 +1176,14 @@ def cam_score(a,b):
     if a_body and b_has_kit: return 0
     if b_body and a_has_kit: return 0
 
-    # HARD RULE: different kit lenses = no match (18-135mm != 16-50mm)
-    if a_kit_lens and b_kit_lens and a_kit_lens!=b_kit_lens: return 0
+    # HARD RULE: different kit lenses = no match; gen tag is wildcard when one side untagged (P1.J)
+    if a_kit_lens and b_kit_lens:
+        def _split_kit(k):
+            m=re.match(r'(.+?)(?:_gen(\d))?$',k)
+            return (m.group(1),m.group(2)) if m else (k,None)
+        fa,ga=_split_kit(a_kit_lens); fb,gb=_split_kit(b_kit_lens)
+        if fa!=fb: return 0                      # different focal range
+        if ga and gb and ga!=gb: return 0        # both tagged, conflicting gen
 
     # HARD RULE: bundle extras — canonicalized to concepts (BUG-T)
     _EC={'xlr_handle':['xlr handle unit','xlr handle','handle unit','xlr-h1','xlr h1','xlr kit'],
@@ -1165,12 +1199,9 @@ def cam_score(a,b):
     ae,be=_extras(na),_extras(nb)
     if ae!=be: return 0
 
-    # HARD RULE: a1 vs a1 II (a1m2) are different generations
-    a_has_a1m2=bool(re.search(r'\ba1\s*m2\b|\bilce-1m2\b',na))
-    b_has_a1m2=bool(re.search(r'\ba1\s*m2\b|\bilce-1m2\b',nb))
-    a_has_a1_bare=bool(re.search(r'\ba1\b',na)) and not a_has_a1m2
-    b_has_a1_bare=bool(re.search(r'\ba1\b',nb)) and not b_has_a1m2
-    if (a_has_a1m2 and b_has_a1_bare) or (b_has_a1m2 and a_has_a1_bare): return 0
+    # HARD RULE: a1 vs a1 II — use gen tokens from extract_models (P1.M)
+    # ma/mb already have 'a1gen1' or 'a1gen2' so compare directly
+    if ('a1gen1' in ma and 'a1gen2' in mb) or ('a1gen2' in ma and 'a1gen1' in mb): return 0
 
     # HARD RULE: explicit color conflict → different products
     COLORS=['black','silver','white','blue','green','red']
