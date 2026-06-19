@@ -316,7 +316,7 @@ def opencart_parse(html, base_url, label, validator):
 
 def salla_parse(html, base_url, label, validator):
     soup=BeautifulSoup(html,'lxml')
-    items=soup.select('custom-salla-product-card,s-product-card-entry,[class~="s-product-card-entry"]')
+    items=soup.select('custom-salla-product-card,s-product-card-entry,[class~="s-product-card-entry"],[data-product-id]')
     log.info(f'[{label}] found {len(items)} salla items')
     if not items:
         body=soup.find('body')
@@ -444,9 +444,14 @@ def parse_qomra(pt):
             html=zenrows_js(url,wait=15000)
             if html:
                 test=BeautifulSoup(html,'lxml')
-                if not test.select('custom-salla-product-card,s-product-card-entry'):
-                    log.info('[Qomra] retrying with wait=20000')
-                    html=zenrows_js(url,wait=20000)
+                if not test.select('custom-salla-product-card,s-product-card-entry,[data-product-id]'):
+                    log.info('[Qomra] retrying with wait=20000 + scroll')
+                    html=zenrows_js(url,wait=20000,scroll=True)
+                    if html:
+                        test2=BeautifulSoup(html,'lxml')
+                        if not test2.select('custom-salla-product-card,s-product-card-entry,[data-product-id]'):
+                            log.info('[Qomra] retrying with wait=25000')
+                            html=zenrows_js(url,wait=25000,scroll=True)
             if not html: break
             results=salla_parse(html,'https://qomra.pro','Qomra',val)
             new=[p for p in results if p['url'] not in seen]
@@ -569,68 +574,66 @@ def parse_mestores(pt):
 def parse_abdulwahed(pt):
     val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set()
-    log.info(f'[Abdulwahed] scraping via search ({pt})')
-    import requests as _req
-    from urllib.parse import quote as _quote
-    headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    # Use multiple targeted search queries to get all Sony cameras/lenses
-    # The main search endpoint returns 32 items per query, so use specific queries
+    log.info(f'[Abdulwahed] scraping via Algolia API ({pt})')
+    import requests as _req, json as _json
+    # Abdulwahed migrated to Next.js App Router + Algolia search (June 2026)
+    ALGOLIA_APP='QI4QSAFMI5'
+    ALGOLIA_KEY='91acdea4c087cd14670e501fb6e9aa5b'
+    INDEX='abd2_live_en_products'
+    alg_headers={
+        'X-Algolia-Application-Id': ALGOLIA_APP,
+        'X-Algolia-API-Key': ALGOLIA_KEY,
+        'Content-Type': 'application/json'
+    }
     queries = {
-        'lenses': ['sony lens fe', 'sony fe 50mm', 'sony fe 24', 'sony fe 85', 'sony fe 70', 'sony fe 16', 'sony fe 35', 'sony fe 90', 'sony fe 12', 'sony fe 135', 'sony fe 200'],
-        'cameras': ['sony alpha camera', 'sony ilce camera', 'sony zv camera', 'sony a7 camera', 'sony a9 camera', 'sony fx camera', 'sony a6 camera', 'sony alpha 7', 'sony mirrorless'],
+        'lenses': ['sony lens fe', 'sony fe 50mm', 'sony fe 24', 'sony fe 85', 'sony fe 70',
+                   'sony fe 16', 'sony fe 35', 'sony fe 90', 'sony fe 12', 'sony fe 135', 'sony fe 200'],
+        'cameras': ['sony alpha camera', 'sony ilce camera', 'sony zv camera', 'sony a7 camera',
+                    'sony a9 camera', 'sony fx camera', 'sony a6 camera', 'sony mirrorless',
+                    'sony alpha 7', 'sony cinema camera'],
     }
     for q in queries[pt]:
         try:
-            url = f'https://www.abdulwahed.com/en/search?q={_quote(q)}'
-            r = _req.get(url, headers=headers, timeout=15)
-            if r.status_code != 200: continue
-            import re as _re, json as _json
-            m = _re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.DOTALL)
-            if not m: continue
-            data = _json.loads(m.group(1))
-            prods = data['props']['pageProps']['searchResults'].get('products', [])
-            for p in prods:
-                name = p.get('name','')
-                if isinstance(name, list): name = name[0] if name else ''
-                if not name or len(name) < 5: continue
-                brand = p.get('brand','')
-                if isinstance(brand, list): brand = brand[0] if brand else ''
-                # P2.I: accept 'SonyGodox' bundles — split runs after
-                if brand and 'sony' not in brand.lower(): continue
-                # P2.I: split bundles before validation — handle ' + ', 'free gift', 'with'
-                for sep_pat in [r'\s+\+\s+', r'free\s+gift', r'\bفلاش\b']:
-                    name = re.split(sep_pat, name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-                sku = p.get('sku','')
-                if isinstance(sku, list): sku = sku[0] if sku else ''
-                # Build correct product URL: abdulwahed.com/en/product/{url_key}
-                url_key = p.get('url_key','')
-                if isinstance(url_key, list): url_key = url_key[0] if url_key else ''
-                if url_key:
-                    link = f"https://www.abdulwahed.com/en/product/{url_key}"
-                else:
-                    # Fallback: extract slug from store.awahed.com URL
-                    raw = p.get('url','')
-                    if isinstance(raw, list): raw = raw[0] if raw else ''
-                    slug = raw.split('/en/')[-1] if '/en/' in raw else ''
-                    link = f"https://www.abdulwahed.com/en/product/{slug}" if slug else ''
-                key = sku or name
-                if key in seen: continue
-                seen.add(key)
-                name = fix_arabic(name, link, val)
-                if not val(name): continue
-                price = None
-                ptax = p.get('prices_with_tax') or p.get('price_incl_tax') or {}
-                if isinstance(ptax, dict):
-                    price = ptax.get('discounted_price') or ptax.get('price') or ptax.get('original_price')
-                elif isinstance(ptax, (int,float,str)):
-                    try: price = float(ptax)
-                    except: pass
-                try: price = float(price) if price else None
-                except: price = None
-                products.append({'name':name,'price':price,'availability':'In Stock','url':link})
+            for page in range(0, 5):  # max 5 pages × 50 = 250 per query
+                r = _req.post(
+                    f'https://{ALGOLIA_APP}-dsn.algolia.net/1/indexes/{INDEX}/query',
+                    headers=alg_headers,
+                    json={'query': q, 'hitsPerPage': 50, 'page': page,
+                          'attributesToRetrieve': ['name','url','sku','price']},
+                    timeout=15
+                )
+                if r.status_code != 200: break
+                data = _json.loads(r.text)
+                hits = data.get('hits', [])
+                if not hits: break
+                for h in hits:
+                    name = h.get('name','').strip()
+                    if not name or len(name) < 5: continue
+                    # Filter to Sony only
+                    if 'sony' not in name.lower(): continue
+                    # Bundle split
+                    for sep_pat in [r'\s+\+\s+', r'free\s+gift']:
+                        name = re.split(sep_pat, name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+                    sku = h.get('sku','') or h.get('objectID','')
+                    link = h.get('url','')
+                    # Normalize URL to abdulwahed.com domain
+                    if link: link = link.replace('https://abdulwahed.com/', 'https://www.abdulwahed.com/')
+                    key = sku or name
+                    if key in seen: continue
+                    seen.add(key)
+                    name = fix_arabic(name, link, val)
+                    if not val(name): continue
+                    # Extract price from SAR field
+                    price_data = h.get('price', {}).get('SAR', {})
+                    price = price_data.get('default') or price_data.get('default_original')
+                    try: price = float(price) if price else None
+                    except: price = None
+                    products.append({'name':name,'price':price,'availability':'In Stock','url':link})
+                    log.debug(f'[Abdulwahed] {name[:60]}')
+                if len(hits) < 50: break  # last page
         except Exception as e:
             log.debug(f'[Abdulwahed] query "{q}" error: {e}')
-        time.sleep(0.5)
+        time.sleep(0.3)
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
 def parse_amazon(pt):
@@ -703,6 +706,12 @@ def parse_noon(pt):
         html=zenrows_js(url,wait=10000)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
+        _noon_items_check=(soup.select('[data-qa="product-block"]') or
+               soup.select('[class*="ProductBlock"]') or soup.select('[href*="/p/"]'))
+        if not _noon_items_check:
+            log.info('[Noon] empty page, retrying with antibot+scroll')
+            html=zenrows_js(url,wait=15000,scroll=True)
+            if html: soup=BeautifulSoup(html,'lxml')
         items=(soup.select('[data-qa="product-block"]') or
                soup.select('[class*="ProductBlock"]') or
                soup.select('[class*="product-block"]') or
@@ -816,8 +825,9 @@ def parse_pclub(pt):
                               'sony rx1r', 'sony rx100', 'sony rx10']:
             try:
                 search_url = f'https://pclub.com.sa/index.php?route=product/search&search={search_term.replace(" ","+")}&limit=25'
-                html2 = plain(search_url)
-                if not html2: html2 = zenrows_js(search_url, wait=8000)
+                # plain_get always fails from GitHub Actions (blocked)
+                # go straight to ZenRows
+                html2 = zenrows_js(search_url, wait=8000)
                 if not html2: continue
                 results2 = opencart_parse(html2, 'https://pclub.com.sa', 'PClub', val)
                 for p in results2:
