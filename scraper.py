@@ -84,6 +84,7 @@ CAM_MODELS_RE = [
     r'\ba5[0-9]{3}\b',
     r'\bzv-[a-z0-9]+',
     r'\bzv1[a-z]?\b',
+    r'\bzve\d+\b',          # ZVE10 (no hyphen — Amazon format)
     r'\bfx[23679][a0]?\b',
     r'\bfx9\b',
     r'\bpxw-\w+',          # PXW-FX9, PXW-FS7 etc
@@ -1010,7 +1011,10 @@ def cam_score(a,b):
     def extract_models(n):
         # Normalize roman numerals to digits
         # Pre-roman normalization (P1.F/M/P, P2.N, P2.O.b/c)
+        # Normalize ZVE10 (no hyphen — Amazon listing format)
+        n=re.sub(r'\bzve(\d+)\b',r'zv-e\1',n)              # ZVE10 → zv-e10, ZVE1 → zv-e1
         n=re.sub(r'\bzv-e10m2k\b','zv-e10gen2',n)         # P1.P: glued form first
+        n=re.sub(r'\bzv-1a\b','zv-1a',n)                   # ZV-1A is its own model
         n=re.sub(r'\bzv[\s_-]*1\b','zv-1',n)             # zv1/zv 1 → zv-1
         n=re.sub(r'\bzv[\s_-]*e10\b','zv-e10',n)         # zv e10 → zv-e10
         n=re.sub(r'\ba7c\s*-?\s*r\b','a7cr',n)           # P2.N: a7cr first
@@ -1104,7 +1108,12 @@ def cam_score(a,b):
         for m in re.finditer(r'\bzv-[a-z]\w+\b',n):
             mv=m.group(0)
             if 'gen' not in mv: models.add(mv)  # other ZV models like zv-e1
+        # ZV-1A is a specific model with a digit-letter suffix
+        if re.search(r'\bzv-1a\b',n): models.add('zv-1a')
         # FX models (cinema line)
+        # Normalize glued FX model names (e.g. FX3Full-Frame → FX3 Full-Frame)
+        n=re.sub(r'\b(fx[23679])(full|frame|cinema|line|body)',r'\1 \2',n,flags=re.IGNORECASE)
+        n=re.sub(r'\b(fx[23679])([a-z])',lambda m: m.group(1)+' '+m.group(2) if m.group(2) not in 'a0' else m.group(0), n)
         # P1.R: FX standalone token only — not inside NANOFX6, SmallRigFX6 etc
         for m in re.finditer(r'(?<![a-z0-9])fx([23679][a0]?)(?![a-z0-9])',n): models.add('fx'+m.group(1))
         for m in re.finditer(r'\bfx9\b',n): models.add('fx9')
