@@ -119,12 +119,15 @@ def extract_our_sku(url):
     if not m: return ''
     slug = m.group(1)
     patterns = [
-        r'(ilc[ez][a-z0-9v]*-[a-z0-9]+)',
-        r'(ilme-[a-z0-9]+)',
-        r'(sel[0-9][a-z0-9]+)',
-        r'(zv-[a-z0-9]+)',
-        r'(dsc-[a-z0-9]+)',
-        r'(pxw-[a-z0-9]+)',
+        r'(ilc[ez][a-z0-9v]*-[a-z0-9]+)',   # ILCE-7M4, ILCZV-E10K
+        r'(ilme-[a-z0-9]+)',                   # ILME-FX3 cinema line
+        r'(selp[a-z0-9]+)',                    # SELP18105G power zoom lenses
+        r'(sel[0-9][a-z0-9]+)',               # SEL50F18F, SEL2470GM2 regular lenses
+        r'(zv-[a-z0-9]+)',                     # ZV-1, ZV-E10 vlog cameras
+        r'(dsc-[a-z0-9]+)',                    # DSC-RX100M7 cybershot
+        r'(pxw-[a-z0-9]+)',                    # PXW-FX9 broadcast
+        r'(vcl-[a-z0-9]+)',                    # VCL-ECF2 converters
+        r'(la-ea[0-9])',                        # LA-EA5 mount adapters
     ]
     for pat in patterns:
         m2 = _re.search(pat, slug)
