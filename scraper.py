@@ -111,6 +111,28 @@ LENS_ID = [' lens','g master','gm ','zeiss','vario-tessar',
            'sel','dn ','dg ','dc ','hsm',
            'sony fe ','sony e ']
 
+
+def extract_our_sku(url):
+    """Extract Sony SKU from AMT product URL slug. e.g. ...-ilczv-e10k.html -> ILCZV-E10K"""
+    import re as _re
+    m = _re.search(r'/([^/]+)\.html$', url)
+    if not m: return ''
+    slug = m.group(1)
+    patterns = [
+        r'(ilc[ez][a-z0-9v]*-[a-z0-9]+)',
+        r'(ilme-[a-z0-9]+)',
+        r'(sel[0-9][a-z0-9]+)',
+        r'(zv-[a-z0-9]+)',
+        r'(dsc-[a-z0-9]+)',
+        r'(pxw-[a-z0-9]+)',
+    ]
+    for pat in patterns:
+        m2 = _re.search(pat, slug)
+        if m2:
+            return m2.group(1).upper()
+    return ''
+
+
 def norm(s):
     # Normalize Greek alpha and unicode dashes/quotes (P0.0)
     s = s.replace('α','a').replace('Α','A')
@@ -424,7 +446,8 @@ def parse_our_site(pt):
                         avail='Out of Stock'
                     else:
                         avail='In Stock'
-                    products.append({'name':name,'price':price,'availability':avail,'url':link}); nf+=1
+                    sku=extract_our_sku(link)
+                    products.append({'name':name,'price':price,'availability':avail,'url':link,'sku':sku}); nf+=1
                 except Exception as e: log.debug(f'[Our Site] {e}')
             log.info(f'[Our Site] p{page}: {nf} valid, {rejected} rejected')
             if nf==0 and len(items)==0: break  # Only break if no items at all
@@ -445,13 +468,13 @@ def parse_qomra(pt):
             if html:
                 test=BeautifulSoup(html,'lxml')
                 if not test.select('custom-salla-product-card,s-product-card-entry,[data-product-id]'):
-                    log.info('[Qomra] retrying with wait=20000 + scroll')
-                    html=zenrows_js(url,wait=20000,scroll=True)
+                    log.info('[Qomra] retrying with wait=12000 + scroll')
+                    html=zenrows_js(url,wait=12000,scroll=True)
                     if html:
                         test2=BeautifulSoup(html,'lxml')
                         if not test2.select('custom-salla-product-card,s-product-card-entry,[data-product-id]'):
-                            log.info('[Qomra] retrying with wait=25000')
-                            html=zenrows_js(url,wait=25000,scroll=True)
+                            log.info('[Qomra] retrying with wait=15000')
+                            html=zenrows_js(url,wait=15000)
             if not html: break
             results=salla_parse(html,'https://qomra.pro','Qomra',val)
             new=[p for p in results if p['url'] not in seen]
@@ -576,64 +599,69 @@ def parse_abdulwahed(pt):
     products=[]; seen=set()
     log.info(f'[Abdulwahed] scraping via Algolia API ({pt})')
     import requests as _req, json as _json
-    # Abdulwahed migrated to Next.js App Router + Algolia search (June 2026)
     ALGOLIA_APP='QI4QSAFMI5'
     ALGOLIA_KEY='91acdea4c087cd14670e501fb6e9aa5b'
     INDEX='abd2_live_en_products'
-    alg_headers={
-        'X-Algolia-Application-Id': ALGOLIA_APP,
-        'X-Algolia-API-Key': ALGOLIA_KEY,
-        'Content-Type': 'application/json'
+    alg_headers={'X-Algolia-Application-Id':ALGOLIA_APP,'X-Algolia-API-Key':ALGOLIA_KEY,'Content-Type':'application/json'}
+    # Category-based browse: reliable, no keyword noise
+    # Level2 categories for Sony cameras and lenses
+    cat_filters = {
+        'cameras': [
+            'Photography /// All Cameras /// Digital Cameras',
+            'Photography /// All Cameras /// Cinema Cameras',
+            'Photography /// All Cameras /// Video Cameras',
+        ],
+        'lenses': [
+            'Photography /// Lenses',
+            'Photography /// Lenses /// Prime Lenses',
+            'Photography /// Lenses /// Zoom Lenses',
+        ],
     }
-    queries = {
-        'lenses': ['sony lens fe', 'sony fe 50mm', 'sony fe 24', 'sony fe 85', 'sony fe 70',
-                   'sony fe 16', 'sony fe 35', 'sony fe 90', 'sony fe 12', 'sony fe 135', 'sony fe 200'],
-        'cameras': ['sony alpha camera', 'sony ilce camera', 'sony zv camera', 'sony a7 camera',
-                    'sony a9 camera', 'sony fx camera', 'sony a6 camera', 'sony mirrorless',
-                    'sony alpha 7', 'sony cinema camera'],
+    # Also do keyword search for Sony brand items not in standard categories
+    kw_queries = {
+        'lenses': ['sony fe lens','sony lens','sony sel','sony zeiss'],
+        'cameras': ['sony alpha','sony ilce','sony zv','sony fx camera','sony rx'],
     }
-    for q in queries[pt]:
+    all_queries = [('cat', f) for f in cat_filters.get(pt,[])] +                   [('kw', q) for q in kw_queries.get(pt,[])]
+    for qtype, q in all_queries:
         try:
-            for page in range(0, 5):  # max 5 pages × 50 = 250 per query
-                r = _req.post(
-                    f'https://{ALGOLIA_APP}-dsn.algolia.net/1/indexes/{INDEX}/query',
-                    headers=alg_headers,
-                    json={'query': q, 'hitsPerPage': 50, 'page': page,
-                          'attributesToRetrieve': ['name','url','sku','price']},
-                    timeout=15
-                )
+            for page in range(0, 5):
+                if qtype == 'cat':
+                    body={'query':'sony','hitsPerPage':50,'page':page,
+                          'attributesToRetrieve':['name','url','sku','price'],
+                          'facetFilters':[f'categories.level2:{q}']}
+                else:
+                    body={'query':q,'hitsPerPage':50,'page':page,
+                          'attributesToRetrieve':['name','url','sku','price'],
+                          'facetFilters':['categories.level1:Brands /// Sony']}
+                r = _req.post(f'https://{ALGOLIA_APP}-dsn.algolia.net/1/indexes/{INDEX}/query',
+                              headers=alg_headers, json=body, timeout=15)
                 if r.status_code != 200: break
-                data = _json.loads(r.text)
-                hits = data.get('hits', [])
+                hits = _json.loads(r.text).get('hits',[])
                 if not hits: break
                 for h in hits:
                     name = h.get('name','').strip()
-                    if not name or len(name) < 5: continue
-                    # Filter to Sony only
+                    if not name or len(name)<5: continue
                     if 'sony' not in name.lower(): continue
-                    # Bundle split
                     for sep_pat in [r'\s+\+\s+', r'free\s+gift']:
                         name = re.split(sep_pat, name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
                     sku = h.get('sku','') or h.get('objectID','')
                     link = h.get('url','')
-                    # Normalize URL to abdulwahed.com domain
-                    if link: link = link.replace('https://abdulwahed.com/', 'https://www.abdulwahed.com/')
+                    if link: link=link.replace('https://abdulwahed.com/','https://www.abdulwahed.com/')
                     key = sku or name
                     if key in seen: continue
                     seen.add(key)
                     name = fix_arabic(name, link, val)
                     if not val(name): continue
-                    # Extract price from SAR field
-                    price_data = h.get('price', {}).get('SAR', {})
+                    price_data = h.get('price',{}).get('SAR',{})
                     price = price_data.get('default') or price_data.get('default_original')
                     try: price = float(price) if price else None
                     except: price = None
                     products.append({'name':name,'price':price,'availability':'In Stock','url':link})
-                    log.debug(f'[Abdulwahed] {name[:60]}')
-                if len(hits) < 50: break  # last page
+                if len(hits)<50: break
         except Exception as e:
-            log.debug(f'[Abdulwahed] query "{q}" error: {e}')
-        time.sleep(0.3)
+            log.debug(f'[Abdulwahed] {q} error: {e}')
+        time.sleep(0.2)
     log.info(f'[Abdulwahed] {pt}: {len(products)}'); return products
 
 def parse_amazon(pt):
@@ -703,14 +731,15 @@ def parse_noon(pt):
     while page<=10:
         url=f"{base}?page={page}" if page>1 else base
         log.info(f'[Noon] page {page}')
-        html=zenrows_js(url,wait=10000)
+        # Noon now aggressively bot-detects — use longer initial wait
+        html=zenrows_js(url,wait=15000)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
         _noon_items_check=(soup.select('[data-qa="product-block"]') or
                soup.select('[class*="ProductBlock"]') or soup.select('[href*="/p/"]'))
         if not _noon_items_check:
-            log.info('[Noon] empty page, retrying with antibot+scroll')
-            html=zenrows_js(url,wait=15000,scroll=True)
+            log.info('[Noon] empty page, retrying with scroll+20s')
+            html=zenrows_js(url,wait=20000,scroll=True)
             if html: soup=BeautifulSoup(html,'lxml')
         items=(soup.select('[data-qa="product-block"]') or
                soup.select('[class*="ProductBlock"]') or
@@ -788,8 +817,9 @@ def parse_cameramix(pt):
         soup=BeautifulSoup(html,'lxml')
         nxt=soup.select_one('ul.pagination li.active + li a,[aria-label="Next"]')
         if not nxt: break
-        if not new and pt=='cameras': break  # cameras: stop when no new cameras found
-        # lenses: continue through all pages (lenses scattered across /Sony pages)
+        # For cameras: don't stop early based on 0 new — pages may have lenses mixed in
+        # Stop only at page 7 if still no new cameras (exhausted search depth)
+        if not new and page >= 7: break
         page+=1; time.sleep(1.5)
     # For cameras: also search for cinema/FX cameras not in the main Sony brand page
     if pt == 'cameras':
@@ -1287,7 +1317,8 @@ def build_rows(our,comp_data,pt):
 
     # Build rows for our products
     for o in our:
-        row={'timestamp':ts,'name':o['name'],'our_price':o['price'],
+        row={'timestamp':ts,'name':o['name'],'our_sku':o.get('sku',''),
+             'our_price':o['price'],
              'our_availability':o['availability'],'our_url':o['url']}
         pfl=[(OUR_SITE,o['price'],o['url'])] if o['price'] and o['availability']=='In Stock' else []
         for src in COMPETITORS:
@@ -1343,7 +1374,7 @@ def build_rows(our,comp_data,pt):
                 name=cluster[src]['name']
                 price=cluster[src]['price']
                 break
-        row={'timestamp':ts,'name':name,'our_price':None,'our_availability':'Not listed','our_url':''}
+        row={'timestamp':ts,'name':name,'our_sku':'','our_price':None,'our_availability':'Not listed','our_url':''}
         pfl=[]
         for src in COMPETITORS:
             if src in cluster:
@@ -1362,9 +1393,9 @@ def build_rows(our,comp_data,pt):
     return rows
 
 # ── Google Sheets ─────────────────────────────────────────────────────────────
-GH=(['Timestamp','Product Name','Our Site (ksa.amt.tv)','',''] +
+GH=(['Timestamp','Product Name','SKU','Our Site (ksa.amt.tv)','',''] +
     sum([[s,'','','',''] for s in COMPETITORS],[]) + ['Summary','','',''])
-CH=(['Timestamp','Product Name','Our Price (SAR)','Our Availability','Our Product URL'] +
+CH=(['Timestamp','Product Name','SKU','Our Price (SAR)','Our Availability','Our Product URL'] +
     ['Product URL','Price (SAR)','Availability','Price Diff (SAR)','Status']*len(COMPETITORS) +
     ['Lowest Price (SAR)','Cheapest Brand','Cheapest Link','Our Price Diff vs Cheapest'])
 SH=['Source','Total Products','Cheaper Than Us','More Expensive','Same Price','Not Listed','Updated']
@@ -1387,7 +1418,7 @@ def make_url(url):
     return url or ''
 
 def row2list(row):
-    out=[row['timestamp'],row['name'],
+    out=[row['timestamp'],row['name'],row.get('our_sku',''),
          row.get('our_price',''),row.get('our_availability',''),make_url(row.get('our_url',''))]
     for s in COMPETITORS:
         d=row.get(s,{})
@@ -1417,7 +1448,7 @@ def color_cells(ws,rows,sh):
         for ci,src in enumerate(COMPETITORS):
             st=row.get(src,{}).get('status',''); col=SC.get(st)
             if not col: continue
-            colidx=5+ci*5+4
+            colidx=6+ci*5+4
             reqs.append({'repeatCell':{'range':{'sheetId':ws.id,'startRowIndex':sr,'endRowIndex':sr+1,
                 'startColumnIndex':colidx,'endColumnIndex':colidx+1},
                 'cell':{'userEnteredFormat':{'backgroundColor':col}},
