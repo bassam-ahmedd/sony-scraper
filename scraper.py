@@ -450,6 +450,7 @@ def parse_our_site(pt):
                     else:
                         avail='In Stock'
                     sku=extract_our_sku(link)
+                    if not sku: log.warning(f'[Our Site] NO_SKU: {name[:60]} | url={link}')
                     products.append({'name':name,'price':price,'availability':avail,'url':link,'sku':sku}); nf+=1
                 except Exception as e: log.debug(f'[Our Site] {e}')
             log.info(f'[Our Site] p{page}: {nf} valid, {rejected} rejected')
