@@ -113,11 +113,16 @@ LENS_ID = [' lens','g master','gm ','zeiss','vario-tessar',
 
 
 def extract_our_sku(url):
-    """Extract Sony SKU from AMT product URL slug. e.g. ...-ilczv-e10k.html -> ILCZV-E10K"""
+    """Extract Sony SKU from AMT product URL slug.
+    Strategy 1: regex for SKU codes embedded in URL (e.g. ...-sel50f18f.html -> SEL50F18F)
+    Strategy 2: fallback lookup table for descriptive-only URLs (e.g. sony-fe-85mm-f-1-4-gm-lens.html)
+    """
     import re as _re
     m = _re.search(r'/([^/]+)\.html$', url)
     if not m: return ''
     slug = m.group(1)
+
+    # Strategy 1: regex patterns for SKU codes in URL slug
     patterns = [
         r'(ilc[ez][a-z0-9v]*-[a-z0-9]+)',   # ILCE-7M4, ILCZV-E10K
         r'(ilme-[a-z0-9]+)',                   # ILME-FX3 cinema line
@@ -133,7 +138,112 @@ def extract_our_sku(url):
         m2 = _re.search(pat, slug)
         if m2:
             return m2.group(1).upper()
-    return ''
+
+    # Strategy 2: lookup table for descriptive-only URLs (no SKU code in slug)
+    _SLUG_SKU_MAP = {
+        # FE full-frame lenses
+        'sony-fe-100-400mm-f4-5-gm-oss': 'SEL100400GM',
+        'sony-vario-tessar-t-fe-24-70mm-f-4-za-oss-lens': 'SEL2470Z',
+        'sony-vario-tessar-t-fe-16-35mm-f-4-za-oss-lens': 'SEL1635Z',
+        'sony-vario-tessar-t-e-16-70mm-f-4-za-oss-lens': 'SEL1670Z',
+        'sony-sonnar-t-fe-55mm-f-1-8-za-lens': 'SEL55F18Z',
+        'sony-sonnar-t-fe-35mm-f-2-8-za-lens': 'SEL35F28Z',
+        'sony-sonnar-t-e-24mm-f-1-8-za-lens': 'SEL24F18Z',
+        'sony-planar-t-fe-50mm-f-1-4-za-lens': 'SEL50F14Z',
+        'sony-fe-pz-16-35mm-f-4-g-lens': 'SELP1635G',
+        'sony-fe-90mm-f-2-8-macro-g-oss-lens': 'SEL90M28G',
+        'sony-fe-85mm-f-1-8-lens': 'SEL85F18',
+        'sony-fe-85mm-f-1-4-gm-lens': 'SEL85F14GM',
+        'sony-fe-85mm-f-1-4-gm-ii-lens': 'SEL85F14GM2',
+        'sony-fe-70-300mm-f-4-5-5-6-g-oss-lens': 'SEL70300G',
+        'sony-fe-70-200mm-f-4-g-oss-lens': 'SEL70200G',
+        'sony-fe-70-200mm-f-2-8-gm-oss-lens': 'SEL70200GM',
+        'sony-fe-70-200mm-f-2-8-gm-oss-ii-lens': 'SEL70200GM2',
+        'sony-fe-600mm-f-4-gm-oss-lens': 'SEL600F40GM',
+        'sony-fe-50mm-f-2-8-macro-lens': 'SEL50M28',
+        'sony-fe-50mm-f-2-5-g-lens': 'SEL50F25G',
+        'sony-fe-50mm-f-1-8-lens': 'SEL50F18F',
+        'sony-fe-50mm-f-1-4-gm-lens': 'SEL50F14GM',
+        'sony-fe-50mm-f-1-2-gm-lens': 'SEL50F12GM',
+        'sony-fe-40mm-f-2-5-g-lens': 'SEL40F25G',
+        'sony-fe-35mm-f-1-8-lens-e-mount-lens-full-frame-format': 'SEL35F18F',
+        'sony-fe-35mm-f-1-4-gm-lens': 'SEL35F14GM',
+        'sony-fe-28mm-f-2-lens': 'SEL28F20',
+        'sony-fe-28-70mm-f-2-gm-lens-sony-e': 'SEL2870GM',
+        'sony-fe-24mm-f-2-8-g-lens': 'SEL24F28G',
+        'sony-fe-24mm-f-1-4-gm-lens': 'SEL24F14GM',
+        'sony-fe-24-70mm-f-2-8-gm-lens': 'SEL2470GM',
+        'sony-fe-24-70mm-f-2-8-gm-ii-lens': 'SEL2470GM2',
+        'sony-fe-24-50mm-f-2-8-g-lens-sony-e': 'SEL2450G',
+        'sony-fe-24-240mm-f-3-5-6-3-oss-lens': 'SEL24240',
+        'sony-fe-24-105mm-f-4-g-oss-lens': 'SEL24105G',
+        'sony-fe-20mm-f-1-8-g-lens': 'SEL20F18G',
+        'sony-fe-200-600mm-f-5-6-6-3-g-oss-lens': 'SEL200600G',
+        'sony-fe-20-70mm-f-4-g-lens-sony-e': 'SEL2070G',
+        'sony-fe-16-35mm-f-2-8-gm2-lens': 'SEL1635GM2',
+        'sony-fe-16-35mm-f-2-8-gm-lens': 'SEL1635GM',
+        'sony-fe-14mm-f-1-8-gm-lens': 'SEL14F18GM',
+        'sony-fe-135mm-f-1-8-gm-lens': 'SEL135F18GM',
+        'sony-fe-12-24mm-f-4-g-lens': 'SEL1224G',
+        'sony-fe-12-24mm-f-2-8-gm-lens': 'SEL1224GM',
+        'sony-fe-100mm-f-2-8-stf-gm-oss-lens': 'SEL100F28GM',
+        'sony-fe-100-400mm-f-5-6-8-oss-lens': 'SEL100400G',
+        'sony-fe-100-400mm-f-4-5-5-6-gm-oss-lens': 'SEL100400GM',
+        'sony-fe-300mm-f-2-8-gm-oss-lens-sony-e': 'SEL300F28GM',
+        # E-mount APS-C lenses
+        'sony-e-pz-18-200mm-f-3-5-6-3-oss-lens': 'SELP18200',
+        'sony-e-pz-18-105mm-f-4-g-oss-lens': 'SELP18105G',
+        'sony-e-pz-16-50mm-f-3-5-5-6-oss-ii-lens-sony-e-black': 'SELP1650',
+        'sony-e-20mm-f-2-8-lens': 'SEL20F28',
+        'sony-e-18-135mm-f-3-5-5-6-oss-lens': 'SEL18135',
+        'sony-e-16-55mm-f-2-8-g-lens': 'SEL1655G',
+        'sony-e-15mm-f-1-4-g-lens-apsc': 'SEL15F14G',
+        'sony-e-11mm-f-1-8-lens-apsc': 'SEL11F18',
+        'sony-e-10-20mm-f-4-pz-g-lens-apsc': 'SELP1020G',
+        'sony-e-10-18mm-f-4-oss-lens': 'SEL1018',
+        # Alpha mirrorless cameras
+        'sony-rx1r-iii-digital-camera': 'DSC-RX1RM3',
+        'sony-alpha-a7cm2-mirrorless-digital-camera-with-28-60mm-lens-silver': 'ILCE-7CM2L/S',
+        'sony-alpha-a7cm2-mirrorless-digital-camera-with-28-60mm-lens-black': 'ILCE-7CM2L/B',
+        'sony-alpha-a7-iii-mirrorless-digital-camera-body-only': 'ILCE-7M3',
+        'sony-alpha-a1-m2-mirrorless-digital-camera-body-only': 'ILCE-1M2',
+        'sony-alpha-a6400-mirrorless-digital-camera-with-16-50mm-lens': 'ILCE-6400L',
+        'sony-alpha-a7-iv-mirrorless-digital-camera-body-only': 'ILCE-7M4',
+        'sony-alpha-a6400-mirrorless-digital-camera-with-18-135mm-lens': 'ILCE-6400M',
+        'sony-alpha-a7s-iii-mirrorless-digital-camera-body-only': 'ILCE-7SM3',
+        'sony-alpha-a7r-v-mirrorless-digital-camera-body-only': 'ILCE-7RM5',
+        'sony-alpha-a7r-iv-mirrorless-digital-camera-body-only': 'ILCE-7RM4A',
+        'sony-alpha-1-mirrorless-digital-camera-body-only': 'ILCE-1',
+        'sony-a7-iii-mirrorless-camera-with-28-70mm-f-3-5-5-6-lens': 'ILCE-7M3K',
+        'sony-alpha-a7r-vi-mirrorless-digital-camera-body-only': 'ILCE-7RM6',
+        'sony-rx10v-digital-camera': 'DSC-RX10M5',
+        'sony-alpha-a9-ii-mirrorless-digital-camera-body-only': 'ILCE-9M2',
+        'sony-alpha-a7cr-mirrorless-digital-camera-body-only-silver': 'ILCE-7CR/S',
+        'sony-alpha-a7cr-mirrorless-digital-camera-body-only-black': 'ILCE-7CR/B',
+        'sony-alpha-a7cm2-mirrorless-digital-camera-body-only-silver': 'ILCE-7CM2/S',
+        'sony-alpha-a7cm2-mirrorless-digital-camera-body-only-black': 'ILCE-7CM2/B',
+        'sony-alpha-a7-iv-mirrorless-digital-camera-with-28-70mm-lens': 'ILCE-7M4K',
+        'sony-alpha-a6600-mirrorless-digital-camera-with-18-135mm-lens': 'ILCE-6600M',
+        'sony-alpha-a6600-mirrorless-digital-camera-body-only': 'ILCE-6600',
+        'sony-alpha-a6400-mirrorless-digital-camera-body-only': 'ILCE-6400',
+        'sony-a9-iii-mirrorless-camera': 'ILCE-9M3',
+        'sony-a7-v-mirrorless-camera-with-28-70mm-ii-lens': 'ILCE-7M5K',
+        'sony-a6700-mirrorless-camera-with-18-135mm-lens': 'ILCE-6700M',
+        'sony-a6700-mirrorless-camera-with-16-50mm-lens': 'ILCE-6700L',
+        'sony-a6700-mirrorless-camera-body-only': 'ILCE-6700',
+        # Cinema line
+        'sony-fx5-5k-full-frame-cinema-camera-body-only': 'ILME-FX5',
+        'sony-fx5-5k-full-frame-cinema-camera-with-xlr-handle': 'ILME-FX5T',
+        'sony-venice-full-frame-cinealta-35mm-6k-cine-camera': 'MPC-3610',
+        'sony-venice-2-extension-system-mini-cbk-3621xs': 'CBK-3621XS',
+        'sony-venice-2-digital-motion-picture-camera-8k': 'MPC-3628',
+        'sony-fx6-full-frame-cinema-camera-body-only': 'ILME-FX6',
+        'sony-fx2-digital-cinema-camera-with-xlr-handle-unit': 'ILME-FX2T',
+        'sony-fx2-digital-cinema-camera-body': 'ILME-FX2',
+        'sony-burano-8k-digital-motion-picture-camera': 'MPC-3626',
+    }
+    return _SLUG_SKU_MAP.get(slug, '')
+
 
 
 def norm(s):
