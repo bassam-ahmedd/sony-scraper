@@ -373,7 +373,7 @@ def detect_avail(item):
     return 'In Stock'  # default
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
-def zenrows_js(url, wait=10000, scroll=False, retries=2):
+def zenrows_js(url, wait=10000, scroll=False, retries=2, timeout=90):
     p={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true',
        'js_render':'true','proxy_country':'sa','wait':str(wait)}
     if scroll:
@@ -388,7 +388,7 @@ def zenrows_js(url, wait=10000, scroll=False, retries=2):
             {'scroll_y':50000},{'wait':3000}])
     for a in range(retries+1):
         try:
-            r=requests.get('https://api.zenrows.com/v1/',params=p,timeout=90)
+            r=requests.get('https://api.zenrows.com/v1/',params=p,timeout=timeout)
             r.raise_for_status(); return r.text
         except Exception as e:
             log.warning(f'ZenRows JS attempt {a+1}: {e}')
@@ -843,17 +843,17 @@ def parse_noon(pt):
     base=URLS[pt]['noon']; val=is_lens if pt=='lenses' else is_camera
     products=[]; seen=set(); page=1
     while page<=10:
-        url=f"{base}?page={page}" if page>1 else base
+        url=f"{base}&p={page}" if page>1 else base
         log.info(f'[Noon] page {page}')
-        # Noon now aggressively bot-detects — use longer initial wait
-        html=zenrows_js(url,wait=15000)
+        # Noon aggressively bot-detects — use 180s timeout and js_instructions
+        html=zenrows_js(url,wait=20000,timeout=180)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
         _noon_items_check=(soup.select('[data-qa="product-block"]') or
                soup.select('[class*="ProductBlock"]') or soup.select('[href*="/p/"]'))
         if not _noon_items_check:
-            log.info('[Noon] empty page, retrying with scroll+20s')
-            html=zenrows_js(url,wait=20000,scroll=True)
+            log.info('[Noon] empty page, retrying with scroll+25s')
+            html=zenrows_js(url,wait=25000,scroll=True,timeout=180)
             if html: soup=BeautifulSoup(html,'lxml')
         items=(soup.select('[data-qa="product-block"]') or
                soup.select('[class*="ProductBlock"]') or
