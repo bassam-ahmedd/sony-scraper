@@ -845,25 +845,62 @@ def parse_noon(pt):
     while page<=10:
         url=f"{base}&p={page}" if page>1 else base
         log.info(f'[Noon] page {page}')
-        # Noon uses Kasada bot protection — use zenrows_js with 180s timeout
-        # wait=10000 is the safe max; longer waits cause 422 on this plan
-        html=zenrows_js(url, wait=10000, timeout=180)
+        # Noon: use internal catalog API via plain ZenRows proxy (no JS render needed for API)
+        _cat_url=f"https://www.noon.com/api/v1/u/catalog/?q=sony&limit=50&page={page}"
+        _noon_headers=json.dumps({
+            'x-noon-channel':'WEB','x-noon-locale':'en-sa',
+            'Accept':'application/json','Referer':'https://www.noon.com/saudi-en/'
+        })
+        p_noon={'apikey':ZENROWS_KEY,'url':_cat_url,'antibot':'true',
+                'premium_proxy':'true','proxy_country':'sa',
+                'custom_headers':_noon_headers}
+        html=None
+        for _a in range(3):
+            try:
+                resp=requests.get('https://api.zenrows.com/v1/',params=p_noon,timeout=60)
+                if resp.status_code in [200,201]:
+                    html=resp.text; break
+                log.warning(f'[Noon] API attempt {_a+1}: {resp.status_code} {resp.text[:100]}')
+            except Exception as e:
+                log.warning(f'[Noon] API attempt {_a+1}: {e}')
+            time.sleep(5)
         if not html:
-            log.warning(f'[Noon] page {page}: no response, stopping')
+            log.warning(f'[Noon] API page {page}: no response')
             break
-        soup=BeautifulSoup(html,'lxml')
-        _noon_items_check=(soup.select('[data-qa="product-block"]') or
-               soup.select('[class*="ProductBlock"]') or soup.select('[href*="/p/"]'))
-        if not _noon_items_check:
-            log.warning(f'[Noon] page {page}: no items — snippet: {str(soup.find("body"))[:400]}')
-            # One retry with scroll
-            html=zenrows_js(url, wait=10000, scroll=True, timeout=180)
-            if html: soup=BeautifulSoup(html,'lxml')
-            _noon_items_check=(soup.select('[data-qa="product-block"]') or
-                   soup.select('[class*="ProductBlock"]') or soup.select('[href*="/p/"]'))
-            if not _noon_items_check:
-                log.warning(f'[Noon] page {page}: still no items after scroll retry, stopping')
-                break
+        # Parse JSON response
+        try:
+            _data=json.loads(html)
+        except Exception:
+            log.warning(f'[Noon] API page {page}: not JSON — snippet: {html[:200]}')
+            break
+        _hits=(_data.get('hits') or _data.get('data',{}).get('hits') or
+               _data.get('result',{}).get('hits') or [])
+        log.info(f'[Noon] API page {page}: {len(_hits)} hits')
+        if not _hits:
+            log.warning(f'[Noon] API page {page}: empty — keys: {list(_data.keys())}')
+            break
+        # Convert API hits to product dicts (skip HTML scraping entirely)
+        for hit in _hits:
+            try:
+                name=(hit.get('name') or hit.get('title') or '').strip()
+                price_raw=hit.get('price',{})
+                price=pparse(str(price_raw.get('value') or price_raw.get('now') or price_raw or ''))
+                link='https://www.noon.com'+hit.get('url','') if hit.get('url','').startswith('/') else hit.get('url','')
+                avail=hit.get('in_stock',True)
+                if not name or not val(name): continue
+                name=fix_arabic(name,link,val)
+                if not val(name): continue
+                if link in seen: continue
+                seen.add(link)
+                if not price or price<100: continue
+                products.append({'name':name,'price':price,'availability':'In Stock' if avail else 'Out of Stock','url':link})
+                nf+=1
+            except Exception as _e:
+                log.warning(f'[Noon] hit parse error: {_e}')
+        log.info(f'[Noon] p{page}: {nf} valid items (total {len(products)})')
+        _total=_data.get('total') or _data.get('data',{}).get('total') or 0
+        if len(products)>=_total or len(_hits)<50: break
+        page+=1; continue  # skip the items loop below
         items=(soup.select('[data-qa="product-block"]') or
                soup.select('[class*="ProductBlock"]') or
                soup.select('[class*="product-block"]') or
