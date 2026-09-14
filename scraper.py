@@ -845,34 +845,29 @@ def parse_noon(pt):
     while page<=10:
         url=f"{base}&p={page}" if page>1 else base
         log.info(f'[Noon] page {page}')
-        # Noon uses Kasada bot protection — use wait_for + extended timeout
-        # js_instructions: scroll to trigger lazy load after Kasada resolves
+        # Noon uses Kasada bot — wait_for waits until products render (cannot combine with js_instructions)
         p_noon={'apikey':ZENROWS_KEY,'url':url,'antibot':'true','premium_proxy':'true',
-                'js_render':'true','proxy_country':'sa','wait':'25000',
-                'wait_for':'[data-qa="product-block"],[class*="ProductBlock"],[class*="productContainer"]',
-                'js_instructions':json.dumps([
-                    {'wait':5000},
-                    {'scroll_y':3000},{'wait':3000},
-                    {'scroll_y':6000},{'wait':2000},
-                    {'scroll_y':9000},{'wait':2000}])}
+                'js_render':'true','proxy_country':'sa','wait':'8000',
+                'wait_for':'[data-qa="product-block"],[class*="ProductBlock"],[class*="productContainer"]'}
         html=None
         for attempt in range(3):
             try:
                 resp=requests.get('https://api.zenrows.com/v1/',params=p_noon,timeout=180)
                 resp.raise_for_status(); html=resp.text
                 if html and ('product-block' in html or 'ProductBlock' in html or '/p/' in html):
+                    log.info(f'[Noon] attempt {attempt+1}: products found in response')
                     break
-                log.warning(f'[Noon] attempt {attempt+1}: no products in response (Kasada?), snippet: {html[:200] if html else "none"}')
+                log.warning(f'[Noon] attempt {attempt+1}: no products (Kasada?), snippet: {html[:300] if html else "none"}')
                 html=None
             except Exception as e:
                 log.warning(f'[Noon] attempt {attempt+1}: {e}')
-            if attempt<2: time.sleep(10)
+            if attempt<2: time.sleep(15)
         if not html: break
         soup=BeautifulSoup(html,'lxml')
         _noon_items_check=(soup.select('[data-qa="product-block"]') or
                soup.select('[class*="ProductBlock"]') or soup.select('[href*="/p/"]'))
         if not _noon_items_check:
-            log.warning(f'[Noon] still no items after Kasada wait — snippet: {str(soup.find("body"))[:300]}')
+            log.warning(f'[Noon] still no items — snippet: {str(soup.find("body"))[:400]}')
             break
         items=(soup.select('[data-qa="product-block"]') or
                soup.select('[class*="ProductBlock"]') or
